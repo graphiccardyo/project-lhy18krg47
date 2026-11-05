@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>모터 On/Off 제어</title>
+<style>
+:root {
+  color-scheme: light;
+  --page: #f9f9f7; --surface: #fcfcfb; --ink: #0b0b0b; --ink-2: #52514e; --border: rgba(11,11,11,.12);
+  --accent: #2a78d6; --good: #0ca30c; --warn: #fab219; --crit: #d03b3b; --idle: #c3c2b7;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --page: #0d0d0d; --surface: #1a1a19; --ink: #f0efec; --ink-2: #c3c2b7; --border: rgba(255,255,255,.12);
+    --accent: #3987e5; --idle: #383835;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page: #0d0d0d; --surface: #1a1a19; --ink: #f0efec; --ink-2: #c3c2b7; --border: rgba(255,255,255,.12);
+  --accent: #3987e5; --idle: #383835;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--page); color: var(--ink); font: 15px/1.45 system-ui, -apple-system, "Segoe UI", "Malgun Gothic", sans-serif; }
+main { max-width: 560px; margin: 32px auto; padding: 0 16px; display: flex; flex-direction: column; gap: 14px; }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 14px; }
+.row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.spacer { flex: 1; }
+h1 { font-size: 19px; margin: 0; }
+.sub { color: var(--ink-2); font-size: 13px; }
+.dot { width: 10px; height: 10px; border-radius: 50%; background: var(--idle); display: inline-block; }
+.dot.good { background: var(--good); } .dot.warn { background: var(--warn); }
+button { font: inherit; padding: 10px 16px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--ink); cursor: pointer; }
+button:disabled { opacity: .45; cursor: not-allowed; }
+button.primary { background: var(--accent); border-color: transparent; color: #fff; font-weight: 600; }
+.controls { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.controls button { font-size: 17px; padding: 16px; font-weight: 600; }
+#stopBtn { grid-column: 1 / -1; background: var(--crit); border-color: transparent; color: #fff; font-size: 20px; }
+.big { font-size: 34px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.pin { font-variant-numeric: tabular-nums; border: 1px solid var(--border); border-radius: 6px; padding: 2px 8px; font-size: 13px; color: var(--ink-2); }
+.pin.on { color: var(--ink); border-color: var(--good); font-weight: 650; }
+#banner { display: none; padding: 9px 14px; border-radius: 8px; border: 1px solid var(--crit); }
+#banner.show { display: block; }
+</style>
+</head>
+<body>
+<main>
+  <div class="row">
+    <h1>모터 On/Off 제어</h1>
+    <span class="spacer"></span>
+    <span class="dot" id="linkDot"></span><span id="linkText" class="sub">연결 안 됨</span>
+    <button id="connectBtn" class="primary">보드 연결</button>
+  </div>
+  <div id="banner" role="alert"></div>
+  <div class="card">
+    <div class="row">
+      <span class="big" id="runText">정지</span>
+      <span class="spacer"></span>
+      <span class="sub" id="elapsed"></span>
+    </div>
+    <div class="row">
+      <span class="pin" id="ena">ENA = –</span>
+      <span class="pin" id="d7">D7 = –</span>
+      <span class="pin" id="d8">D8 = –</span>
+    </div>
+    <div class="controls">
+      <button id="fwdBtn" disabled>정회전 ON</button>
+      <button id="revBtn" disabled>역회전 ON</button>
+      <button id="stopBtn" disabled>정지</button>
+    </div>
+    <span class="sub">PWM 없이 ENA를 HIGH/LOW로만 켜고 끕니다. 켜면 전원 전압이 그대로 걸리니 짧게 운전하세요. Space 또는 Esc로 정지하며, 방향은 정지 후 바꿀 수 있습니다. 페이지가 닫히거나 통신이 끊기면 보드가 약 1.5초 뒤 스스로 멈춥니다.</span>
+  </div>
+</main>
+<script>
+const FIRMWARE = 'READY UNO_L298N_ONOFF 1.0';
+const $ = id => document.getElementById(id);
+const state = { port: null, reader: null, writer: null, queue: Promise.resolve(), connected: false, ready: false,
+  heartbeat: null, run: '0', runSince: 0, pins: null };
+
+function banner(text) { $('banner').textContent = text || ''; $('banner').classList.toggle('show', !!text); }
+
+function send(line) {
+  if (!state.writer) return Promise.resolve();
+  const bytes = new TextEncoder().encode(line + '\n');
+  state.queue = state.queue.then(() => state.writer && state.writer.write(bytes)).catch(() => {});
+  return state.queue;
+}
+
+async function connect() {
+  banner('');
+  let port;
+  try {
+    const known = await navigator.serial.getPorts();
+    port = known.length === 1 ? known[0] : await navigator.serial.requestPort();
+  } catch (e) { return; }
+  try { await port.open({ baudRate: 115200 }); }
+  catch (e) { banner('포트를 열 수 없습니다. 다른 프로그램이 COM 포트를 쓰고 있는지 확인하세요.'); return; }
+  state.port = port;
+  state.writer = port.writable.getWriter();
+  state.reader = port.readable.getReader();
+  state.queue = Promise.resolve();
+  state.connected = true; state.ready = false; state.run = '0'; state.pins = null;
+  // Opening the port normally resets the Uno. HELLO covers boards that did not reset.
+  setTimeout(() => { if (state.connected && !state.ready) send('HELLO'); }, 2200);
+  setTimeout(() => {
+    if (state.connected && !state.ready) banner('On/Off 펌웨어 응답이 없습니다. firmware/uno_onoff 스케치가 업로드되어 있는지 확인하세요.');
+  }, 5000);
+  state.heartbeat = setInterval(() => { if (state.ready) send('PING'); }, 400);
+  refresh();
+  readLoop();
+}
+
+async function readLoop() {
+  const decoder = new TextDecoder();
+  let buffer = '';
+  try {
+    while (true) {
+      const { value, done } = await state.reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let at;
+      while ((at = buffer.indexOf('\n')) >= 0) {
+        handleLine(buffer.slice(0, at).trim());
+        buffer = buffer.slice(at + 1);
+      }
+      if (buffer.length > 512) buffer = '';
+    }
+  } catch (e) {
+    if (state.connected) banner('보드와의 연결이 끊겼습니다. USB를 확인한 뒤 다시 연결하세요.');
+  }
+  const { port, reader, writer } = state;
+  state.port = state.reader = state.writer = null;
+  state.connected = state.ready = false; state.run = '0'; state.pins = null;
+  clearInterval(state.heartbeat);
+  try { reader.releaseLock(); } catch (e) {}
+  try { writer.releaseLock(); } catch (e) {}
+  try { await port.close(); } catch (e) {}
+  refresh();
+}
+
+async function disconnect() {
+  await send('STOP');
+  state.connected = false;
+  try { await state.reader.cancel(); } catch (e) {}
+}
+
+function handleLine(line) {
+  if (line === FIRMWARE) { state.ready = true; banner(''); refresh(); return; }
+  if (line.startsWith('ERR ')) { banner('보드가 명령을 거부하고 모터를 정지했습니다: ' + line.slice(4)); return; }
+  if (!line.startsWith('STATE ')) return;
+  const f = Object.fromEntries(line.slice(6).split(' ').map(p => p.split('=')));
+  if (f.run !== '0' && state.run !== f.run) state.runSince = performance.now();
+  state.run = f.run;
+  state.pins = f;
+  if (f.reason === 'TIMEOUT') banner('통신이 1.5초 이상 끊겨 보드가 모터를 정지했습니다.');
+  refresh();
+}
+
+function refresh() {
+  const live = state.connected && state.ready;
+  $('linkDot').className = 'dot' + (live ? ' good' : state.connected ? ' warn' : '');
+  $('linkText').textContent = live ? '연결됨' : state.connected ? '보드 부팅 대기' : '연결 안 됨';
+  $('connectBtn').textContent = state.connected ? '연결 해제' : '보드 연결';
+  $('connectBtn').className = state.connected ? '' : 'primary';
+  $('runText').textContent = !live || state.run === '0' ? '정지' : state.run === 'F' ? '정회전 ON' : '역회전 ON';
+  $('fwdBtn').disabled = !live || state.run !== '0';
+  $('revBtn').disabled = !live || state.run !== '0';
+  $('stopBtn').disabled = !live;
+  for (const [id, key] of [['ena', 'ena'], ['d7', 'd7'], ['d8', 'd8']]) {
+    const value = live && state.pins ? state.pins[key] : null;
+    $(id).textContent = id.toUpperCase() + ' = ' + (value ?? '–');
+    $(id).classList.toggle('on', value === '1');
+  }
+}
+
+// Shows how long the bridge has been on, since full voltage heats the L298N quickly.
+setInterval(() => {
+  const on = state.connected && state.ready && state.run !== '0';
+  $('elapsed').textContent = on ? '운전 ' + ((performance.now() - state.runSince) / 1000).toFixed(1) + '초' : '';
+}, 100);
+
+$('connectBtn').onclick = () => state.connected ? disconnect() : connect();
+$('fwdBtn').onclick = e => { banner(''); send('RUN F'); e.currentTarget.blur(); };
+$('revBtn').onclick = e => { banner(''); send('RUN R'); e.currentTarget.blur(); };
+$('stopBtn').onclick = e => { send('STOP'); e.currentTarget.blur(); };
+document.addEventListener('keydown', e => {
+  if ((e.key === ' ' || e.key === 'Escape') && state.connected && state.ready) { e.preventDefault(); send('STOP'); }
+});
+window.addEventListener('pagehide', () => { if (state.writer) send('STOP'); });
+
+refresh();
+if (!('serial' in navigator)) {
+  $('connectBtn').disabled = true;
+  banner('이 브라우저는 Web Serial을 지원하지 않습니다. Chrome 또는 Edge로 여세요.');
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,662 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Aeropendulum 1주차 데모</title>
+<style>
+:root {
+  color-scheme: light;
+  --page: #f9f9f7; --surface: #fcfcfb; --ink: #0b0b0b; --ink-2: #52514e; --muted: #6f6d68;
+  --grid: #e1e0d9; --axis: #c3c2b7; --border: rgba(11,11,11,.12);
+  --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --x: #e34948; --y: #008300; --z: #2a78d6;
+  --band: #cde2fb; --board: #256abf; --board-side: #184f95; --chip: #26262a;
+  --good: #0ca30c; --warn: #fab219; --crit: #d03b3b; --on-crit: #fff;
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) {
+    color-scheme: dark;
+    --page: #0d0d0d; --surface: #1a1a19; --ink: #f0efec; --ink-2: #c3c2b7; --muted: #a3a29a;
+    --grid: #2c2c2a; --axis: #383835; --border: rgba(255,255,255,.12);
+    --s1: #3987e5; --s2: #d95926; --s3: #199e70; --x: #e66767; --y: #2ea82e; --z: #3987e5;
+    --band: #184f95; --board: #256abf; --board-side: #104281; --chip: #0b0b0b;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page: #0d0d0d; --surface: #1a1a19; --ink: #f0efec; --ink-2: #c3c2b7; --muted: #a3a29a;
+  --grid: #2c2c2a; --axis: #383835; --border: rgba(255,255,255,.12);
+  --s1: #3987e5; --s2: #d95926; --s3: #199e70; --x: #e66767; --y: #2ea82e; --z: #3987e5;
+  --band: #184f95; --board: #256abf; --board-side: #104281; --chip: #0b0b0b;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--page); color: var(--ink); font: 15px/1.45 system-ui, -apple-system, "Segoe UI", "Malgun Gothic", sans-serif; }
+header { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; padding: 14px 20px; }
+h1 { font-size: 19px; margin: 0; font-weight: 650; }
+h2 { font-size: 15px; margin: 0; font-weight: 650; }
+.spacer { flex: 1; }
+.pill { display: inline-flex; align-items: center; gap: 7px; font-size: 14px; color: var(--ink-2); }
+.dot { width: 10px; height: 10px; border-radius: 50%; background: var(--axis); }
+.dot.good { background: var(--good); } .dot.warn { background: var(--warn); } .dot.crit { background: var(--crit); }
+button { font: inherit; padding: 8px 14px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--ink); cursor: pointer; }
+button:hover:not(:disabled) { border-color: var(--ink-2); }
+button:disabled { opacity: .45; cursor: not-allowed; }
+button.primary { background: var(--s1); border-color: transparent; color: #fff; font-weight: 600; }
+button.stop { background: var(--crit); border-color: transparent; color: var(--on-crit); font-weight: 700; }
+main { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; padding: 0 20px 20px; max-width: 1500px; margin: auto; }
+@media (max-width: 960px) { main { grid-template-columns: minmax(0, 1fr); padding: 0 16px 16px; } header { padding: 14px 16px; } }
+section { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.sub { color: var(--ink-2); font-size: 13px; }
+.note { color: var(--muted); font-size: 12.5px; }
+canvas { display: block; width: 100%; }
+#board { height: 320px; }
+.chart { position: relative; }
+#attChart { height: 170px; }
+#pwmChart { height: 110px; }
+#wave { height: 64px; }
+.tip { position: absolute; top: 2px; pointer-events: none; background: var(--page); border: 1px solid var(--border); border-radius: 6px; padding: 3px 8px; font-size: 12.5px; white-space: nowrap; display: none; font-variant-numeric: tabular-nums; }
+.stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.stat { border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; }
+.stat b { display: block; font-size: 26px; font-weight: 650; line-height: 1.2; font-variant-numeric: tabular-nums; }
+.stat span { font-size: 13px; color: var(--ink-2); display: flex; align-items: center; gap: 6px; }
+.swatch { width: 10px; height: 3px; border-radius: 2px; display: inline-block; }
+.big { font-size: 46px; font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; }
+.slider { position: relative; padding: 6px 0; }
+.slider input { width: 100%; margin: 0; position: relative; accent-color: var(--s1); height: 26px; display: block; }
+#bandBar { position: absolute; top: 12px; height: 14px; background: var(--band); border-radius: 4px; display: none; }
+.scale { display: flex; justify-content: space-between; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+input[type=number] { font: inherit; width: 76px; padding: 7px 8px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--ink); }
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.seg button { border: 0; border-radius: 0; background: transparent; }
+.seg button[aria-pressed=true] { background: var(--ink); color: var(--surface); font-weight: 600; }
+.pin { font-variant-numeric: tabular-nums; border: 1px solid var(--border); border-radius: 6px; padding: 2px 8px; font-size: 13px; color: var(--ink-2); }
+.pin.on { color: var(--ink); border-color: var(--good); font-weight: 650; }
+#banner { display: none; margin: 0 20px 12px; padding: 9px 14px; border-radius: 8px; border: 1px solid var(--crit); max-width: 1460px; }
+#banner.show { display: block; }
+#stopBtn { font-size: 17px; padding: 10px 26px; }
+#startBtn { font-size: 17px; padding: 10px 22px; }
+.legend { display: flex; gap: 14px; font-size: 13px; color: var(--ink-2); }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Aeropendulum 1주차 시연</h1>
+  <span class="sub">Arduino Uno · L298N · DC 모터 · MPU6050</span>
+  <span class="spacer"></span>
+  <span class="pill"><i id="linkDot" class="dot"></i><span id="linkText">연결 안 됨</span></span>
+  <span class="pill"><i id="imuDot" class="dot"></i><span id="imuText">IMU 대기</span></span>
+  <button id="connectBtn" class="primary">보드 연결</button>
+</header>
+<div id="banner" role="alert"></div>
+<main>
+  <section aria-labelledby="imuTitle">
+    <div class="row">
+      <h2 id="imuTitle">MPU6050 자세</h2>
+      <span class="sub" id="imuMeta"></span>
+      <span class="spacer"></span>
+      <button id="yawBtn" disabled>현재 방향을 Yaw 0°로</button>
+    </div>
+    <canvas id="board" role="img" aria-label="센서 기판의 현재 자세를 보여주는 3D 그림"></canvas>
+    <div class="stats">
+      <div class="stat"><span><i class="swatch" style="background:var(--s1)"></i>Roll</span><b id="roll">–</b></div>
+      <div class="stat"><span><i class="swatch" style="background:var(--s2)"></i>Pitch</span><b id="pitch">–</b></div>
+      <div class="stat"><span><i class="swatch" style="background:var(--s3)"></i>Yaw</span><b id="yaw">–</b></div>
+    </div>
+    <div class="legend" aria-hidden="true">
+      <span><i class="swatch" style="background:var(--s1)"></i>Roll</span>
+      <span><i class="swatch" style="background:var(--s2)"></i>Pitch</span>
+      <span><i class="swatch" style="background:var(--s3)"></i>Yaw</span>
+      <span class="spacer"></span><span>최근 15초, 단위 °</span>
+    </div>
+    <div class="chart"><canvas id="attChart" role="img" aria-label="최근 15초 Roll, Pitch, Yaw 그래프"></canvas><div class="tip"></div></div>
+    <span class="note">Yaw는 지자기 센서가 없어 초기 방향 기준이며 시간이 지나면 드리프트합니다.</span>
+  </section>
+
+  <section aria-labelledby="motorTitle">
+    <div class="row">
+      <h2 id="motorTitle">L298N 모터 PWM</h2>
+      <span class="sub">D5 약 980 Hz, 8비트</span>
+    </div>
+    <div class="row">
+      <span class="big"><span id="pct">0</span>%</span>
+      <span class="sub">PWM <b id="pwm">0</b> / 255<br>보드가 보고한 출력</span>
+      <span class="spacer"></span>
+      <span class="pin" id="d7">D7 = –</span>
+      <span class="pin" id="d8">D8 = –</span>
+    </div>
+    <canvas id="wave" role="img" aria-label="현재 듀티비의 PWM 파형 도식"></canvas>
+    <div>
+      <div class="row" style="justify-content:space-between">
+        <label for="slider" class="sub">PWM 듀티비 설정</label>
+        <span class="row"><input id="number" type="number" min="0" max="100" value="0" aria-label="PWM 퍼센트" disabled><span class="sub">%</span></span>
+      </div>
+      <div class="slider"><div id="bandBar"></div><input id="slider" type="range" min="0" max="100" value="0" disabled></div>
+      <div class="scale"><span>0</span><span>25</span><span>50</span><span>75</span><span>100</span></div>
+    </div>
+    <div class="row">
+      <div class="seg" role="group" aria-label="회전 방향">
+        <button id="dirF" aria-pressed="true" disabled>정회전</button>
+        <button id="dirR" aria-pressed="false" disabled>역회전</button>
+      </div>
+      <span class="spacer"></span>
+      <button id="startBtn" class="primary" disabled>운전 시작</button>
+      <button id="stopBtn" class="stop" disabled>정지</button>
+    </div>
+    <span class="note">Space 또는 Esc로 즉시 정지합니다. 방향은 정지 후 바꿀 수 있고, 페이지가 닫히거나 통신이 끊기면 보드가 약 1.5초 뒤 스스로 멈춥니다.</span>
+    <div class="row" style="border-top:1px solid var(--border);padding-top:10px">
+      <span><b>확인한 가동 범위</b> <span id="rangeText" class="sub"></span></span>
+      <span class="spacer"></span>
+      <button id="markMin" disabled>현재 값을 최소로</button>
+      <button id="markMax" disabled>현재 값을 최대로</button>
+      <button id="markClear">지우기</button>
+    </div>
+    <div class="legend" aria-hidden="true"><span>출력 PWM, 최근 15초, 단위 %</span></div>
+    <div class="chart"><canvas id="pwmChart" role="img" aria-label="최근 15초 PWM 출력 그래프"></canvas><div class="tip"></div></div>
+  </section>
+</main>
+
+<script>
+// Offsets copied from mpu6050-calibration.json (manual calibration, same module and wiring).
+const CAL = { id: 3, offsets: [-0.017059, -0.022036, 0.147525, 0.92519, -1.014962, -0.145191] };
+const FIRMWARE = 'READY UNO_DEMO 1.0';
+const WINDOW_MS = 15000;
+const $ = id => document.getElementById(id);
+const css = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+const state = {
+  port: null, reader: null, writer: null, writeQueue: Promise.resolve(), connected: false, ready: false,
+  heartbeat: null, readyTimer: null, running: false, dir: 'F', setTimer: null, lastSetAt: 0,
+  q: [1, 0, 0, 0], yawZero: 0, lastSampleAt: 0, rate: 0, rateCount: 0, rateAt: 0, calId: null, calFailed: false,
+  lastRestoreAt: 0, imuError: '', att: [], pwm: [], reported: { pct: 0, dir: 'F', d7: null, d8: null },
+  range: { min: null, max: null },
+};
+
+function banner(text) { $('banner').textContent = text || ''; $('banner').classList.toggle('show', !!text); }
+function setDot(id, kind) { $(id).className = 'dot' + (kind ? ' ' + kind : ''); }
+
+// --- Serial link ---
+function send(line) {
+  if (!state.writer) return Promise.resolve();
+  const bytes = new TextEncoder().encode(line + '\n');
+  state.writeQueue = state.writeQueue.then(() => state.writer && state.writer.write(bytes)).catch(() => {});
+  return state.writeQueue;
+}
+// RESTORE is longer than the Uno's 64-byte receive buffer, so it goes out in pieces.
+function sendChunked(line) {
+  const encoder = new TextEncoder();
+  state.writeQueue = state.writeQueue.then(async () => {
+    for (let i = 0; i < line.length && state.writer; i += 32) {
+      await state.writer.write(encoder.encode(line.slice(i, i + 32)));
+      await sleep(15);
+    }
+    if (state.writer) await state.writer.write(encoder.encode('\n'));
+  }).catch(() => {});
+}
+
+async function connect() {
+  if (!('serial' in navigator)) return;
+  banner('');
+  let port;
+  try {
+    const known = await navigator.serial.getPorts();
+    port = known.length === 1 ? known[0] : await navigator.serial.requestPort();
+  } catch (e) { return; }
+  try {
+    await port.open({ baudRate: 115200 });
+  } catch (e) {
+    banner('포트를 열 수 없습니다. 다른 프로그램(시리얼 모니터, 기존 GUI)이 COM 포트를 쓰고 있는지 확인하세요.');
+    return;
+  }
+  state.port = port;
+  state.writer = port.writable.getWriter();
+  state.reader = port.readable.getReader();
+  state.writeQueue = Promise.resolve();
+  state.connected = true; state.ready = false; state.running = false;
+  state.att = []; state.pwm = []; state.calId = null; state.calFailed = false; state.lastRestoreAt = 0; state.imuError = '';
+  $('slider').value = 0; $('number').value = 0;
+  // Opening the port normally resets the Uno. HELLO covers boards that did not reset.
+  clearTimeout(state.readyTimer);
+  state.readyTimer = setTimeout(() => { if (state.connected && !state.ready) send('HELLO'); }, 2600);
+  setTimeout(() => {
+    if (state.connected && !state.ready) banner('데모 펌웨어 응답이 없습니다. firmware/uno_demo 스케치가 업로드되어 있는지 확인하세요.');
+  }, 6000);
+  state.heartbeat = setInterval(() => { if (state.ready) send('PING'); }, 400);
+  refreshUi();
+  readLoop();
+}
+
+async function readLoop() {
+  const decoder = new TextDecoder();
+  let buffer = '';
+  try {
+    while (true) {
+      const { value, done } = await state.reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let at;
+      while ((at = buffer.indexOf('\n')) >= 0) {
+        handleLine(buffer.slice(0, at).trim());
+        buffer = buffer.slice(at + 1);
+      }
+      if (buffer.length > 512) buffer = '';
+    }
+  } catch (e) {
+    if (state.connected) banner('보드와의 연결이 끊겼습니다. USB를 확인한 뒤 다시 연결하세요.');
+  }
+  teardown();
+}
+
+async function teardown() {
+  if (!state.port) return;
+  const { port, reader, writer } = state;
+  state.port = state.reader = state.writer = null;
+  state.connected = state.ready = state.running = false;
+  clearInterval(state.heartbeat);
+  clearTimeout(state.readyTimer);
+  try { reader.releaseLock(); } catch (e) {}
+  try { writer.releaseLock(); } catch (e) {}
+  try { await port.close(); } catch (e) {}
+  refreshUi();
+}
+
+async function disconnect() {
+  await send('STOP');
+  state.connected = false;
+  try { await state.reader.cancel(); } catch (e) {}
+}
+
+// --- Incoming protocol ---
+function handleLine(line) {
+  if (!line) return;
+  if (line.startsWith('S,')) return handleSample(line);
+  if (line === FIRMWARE) { state.ready = true; banner(''); refreshUi(); return; }
+  if (line.startsWith('STATE ')) return handleState(line);
+  if (line.startsWith('ERR ')) { banner('보드가 명령을 거부하고 출력을 멈췄습니다: ' + line.slice(4)); return; }
+  if (line === 'IMU READY') { state.imuError = ''; state.calFailed = false; return; }
+  if (line.startsWith('IMU ERROR')) { state.imuError = line.slice(10); state.lastSampleAt = 0; return; }
+  if (line.startsWith('CAL RESTORED')) { state.calFailed = false; return; }
+  if (line === 'CAL REJECTED') { state.calFailed = true; }
+}
+
+function handleState(line) {
+  const f = Object.fromEntries(line.slice(6).split(' ').map(p => p.split('=')));
+  const pct = Number(f.pct);
+  state.reported = { pct, dir: f.dir, d7: f.d7, d8: f.d8 };
+  state.pwm.push({ t: performance.now(), pct });
+  if (['TIMEOUT', 'ERROR', 'BOOT', 'CONNECTED', 'STOP'].includes(f.reason)) state.running = false;
+  if (f.reason === 'TIMEOUT') banner('통신이 1.5초 이상 끊겨 보드가 모터를 정지했습니다.');
+  if (f.reason === 'BOOT') state.dir = f.dir;
+  refreshUi();
+}
+
+function handleSample(line) {
+  const f = line.split(',');
+  if (f.length !== 14) return;
+  const values = f.slice(1).map(Number);
+  if (values.some(v => !Number.isFinite(v))) return;
+  const now = performance.now();
+  state.q = values.slice(7, 11);
+  state.calId = values[12];
+  state.lastSampleAt = now;
+  state.rateCount++;
+  if (now - state.rateAt > 1000) { state.rate = state.rateCount * 1000 / (now - state.rateAt); state.rateAt = now; state.rateCount = 0; }
+  const [roll, pitch, yaw] = euler(viewQuat());
+  state.att.push({ t: now, roll, pitch, yaw });
+  // The board forgets offsets when it re-initializes the sensor, so sample cal_id drives RESTORE.
+  if (state.ready && state.calId !== CAL.id && !state.calFailed && now - state.lastRestoreAt > 2000) {
+    state.lastRestoreAt = now;
+    sendChunked('RESTORE ' + CAL.id + ' ' + CAL.offsets.join(' '));
+  }
+}
+
+// --- Commands ---
+const commanded = () => Number($('slider').value);
+function start() { banner(''); state.running = true; send('SET ' + commanded() + ' ' + state.dir); refreshUi(); }
+function stop() { clearTimeout(state.setTimer); state.setTimer = null; state.running = false; send('STOP'); refreshUi(); }
+function onSliderChange(value) {
+  const pct = Math.max(0, Math.min(100, Math.round(Number(value) || 0)));
+  $('slider').value = pct;
+  if (document.activeElement !== $('number')) $('number').value = pct;
+  if (!state.running || state.setTimer) return;
+  // Coalesce slider drags; the trailing send carries the latest value.
+  const wait = Math.max(0, 100 - (performance.now() - state.lastSetAt));
+  state.setTimer = setTimeout(() => {
+    state.setTimer = null;
+    state.lastSetAt = performance.now();
+    if (state.running) send('SET ' + commanded() + ' ' + state.dir);
+  }, wait);
+}
+function setDir(dir) { if (!state.running) { state.dir = dir; refreshUi(); } }
+
+function loadRange() {
+  try { Object.assign(state.range, JSON.parse(localStorage.getItem('pwmRange') || '{}')); } catch (e) {}
+}
+function saveRange() {
+  try { localStorage.setItem('pwmRange', JSON.stringify(state.range)); } catch (e) {}
+  refreshUi();
+}
+const toPwm = pct => Math.floor((pct * 255 + 50) / 100);
+
+// --- UI state ---
+function refreshUi() {
+  const live = state.connected && state.ready;
+  setDot('linkDot', live ? 'good' : state.connected ? 'warn' : '');
+  $('linkText').textContent = live ? '연결됨' : state.connected ? '보드 부팅 대기' : '연결 안 됨';
+  $('connectBtn').textContent = state.connected ? '연결 해제' : '보드 연결';
+  $('connectBtn').className = state.connected ? '' : 'primary';
+  for (const id of ['slider', 'number', 'markMin', 'markMax', 'yawBtn']) $(id).disabled = !live;
+  $('startBtn').disabled = !live || state.running;
+  $('stopBtn').disabled = !live;
+  $('dirF').disabled = $('dirR').disabled = !live || state.running;
+  $('dirF').setAttribute('aria-pressed', state.dir === 'F');
+  $('dirR').setAttribute('aria-pressed', state.dir === 'R');
+  const r = state.reported;
+  $('pct').textContent = live ? r.pct : 0;
+  $('pwm').textContent = live ? toPwm(r.pct) : 0;
+  $('d7').textContent = 'D7 = ' + (live && r.d7 != null ? r.d7 : '–');
+  $('d8').textContent = 'D8 = ' + (live && r.d8 != null ? r.d8 : '–');
+  $('d7').classList.toggle('on', live && r.d7 === '1');
+  $('d8').classList.toggle('on', live && r.d8 === '1');
+  const { min, max } = state.range;
+  const has = min != null && max != null;
+  const part = v => v == null ? '–' : v + '% (PWM ' + toPwm(v) + ')';
+  $('rangeText').textContent = min == null && max == null ? '아직 표시하지 않음' : part(min) + ' ~ ' + part(max);
+  $('bandBar').style.display = has ? 'block' : 'none';
+  if (has) { $('bandBar').style.left = Math.min(min, max) + '%'; $('bandBar').style.width = Math.abs(max - min) + '%'; }
+}
+
+function refreshImu(now) {
+  const fresh = state.connected && now - state.lastSampleAt < 500;
+  if (!state.connected) { setDot('imuDot', ''); $('imuText').textContent = 'IMU 대기'; }
+  else if (fresh) {
+    setDot('imuDot', state.calFailed ? 'warn' : 'good');
+    $('imuText').textContent = state.calFailed ? 'IMU 수신 중, 보정값 미적용' : 'IMU 수신 중';
+  } else if (state.ready) {
+    setDot('imuDot', 'crit');
+    $('imuText').textContent = state.imuError ? 'IMU 오류: 재시도 중' : 'IMU 데이터 없음';
+  } else { setDot('imuDot', 'warn'); $('imuText').textContent = 'IMU 대기'; }
+  $('imuMeta').textContent = fresh ? state.rate.toFixed(0) + ' Hz · 보정 ' + (state.calId === CAL.id ? '적용' : '미적용') : '';
+  if (fresh) {
+    const [roll, pitch, yaw] = euler(viewQuat());
+    $('roll').textContent = roll.toFixed(1) + '°';
+    $('pitch').textContent = pitch.toFixed(1) + '°';
+    $('yaw').textContent = yaw.toFixed(1) + '°';
+  } else {
+    $('roll').textContent = $('pitch').textContent = $('yaw').textContent = '–';
+  }
+}
+
+// --- Attitude math. q maps sensor axes to the reference frame, (w, x, y, z). ---
+function qmul(a, b) {
+  return [
+    a[0]*b[0] - a[1]*b[1] - a[2]*b[2] - a[3]*b[3],
+    a[0]*b[1] + a[1]*b[0] + a[2]*b[3] - a[3]*b[2],
+    a[0]*b[2] - a[1]*b[3] + a[2]*b[0] + a[3]*b[1],
+    a[0]*b[3] + a[1]*b[2] - a[2]*b[1] + a[3]*b[0],
+  ];
+}
+function viewQuat() {
+  const half = -state.yawZero / 2;
+  return qmul([Math.cos(half), 0, 0, Math.sin(half)], state.q);
+}
+function euler([w, x, y, z]) {
+  const deg = 180 / Math.PI;
+  return [
+    Math.atan2(2 * (w*x + y*z), 1 - 2 * (x*x + y*y)) * deg,
+    Math.asin(Math.max(-1, Math.min(1, 2 * (w*y - z*x)))) * deg,
+    Math.atan2(2 * (w*z + x*y), 1 - 2 * (y*y + z*z)) * deg,
+  ];
+}
+function rotate([w, x, y, z], [vx, vy, vz]) {
+  const tx = 2 * (y*vz - z*vy), ty = 2 * (z*vx - x*vz), tz = 2 * (x*vy - y*vx);
+  return [vx + w*tx + y*tz - z*ty, vy + w*ty + z*tx - x*tz, vz + w*tz + x*ty - y*tx];
+}
+
+// --- Canvas helpers ---
+function fit(canvas) {
+  const ratio = window.devicePixelRatio || 1;
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  if (canvas.width !== Math.round(w * ratio) || canvas.height !== Math.round(h * ratio)) {
+    canvas.width = Math.round(w * ratio); canvas.height = Math.round(h * ratio);
+  }
+  const g = canvas.getContext('2d');
+  g.setTransform(ratio, 0, 0, ratio, 0, 0);
+  g.clearRect(0, 0, w, h);
+  return { g, w, h };
+}
+const FONT = '12px system-ui, "Segoe UI", "Malgun Gothic", sans-serif';
+
+// Fixed camera with reference +Z up.
+const AZ = -55 * Math.PI / 180, EL = 24 * Math.PI / 180;
+const N = [Math.cos(EL) * Math.cos(AZ), Math.cos(EL) * Math.sin(AZ), Math.sin(EL)];
+const R = [-Math.sin(AZ), Math.cos(AZ), 0];
+const U = [N[1]*R[2] - N[2]*R[1], N[2]*R[0] - N[0]*R[2], N[0]*R[1] - N[1]*R[0]];
+const dot = (a, b) => a[0]*b[0] + a[1]*b[1] + a[2]*b[2];
+
+function drawBoard() {
+  const { g, w, h } = fit($('board'));
+  const scale = Math.min(w, h) / 7.6, cx = w / 2, cy = h / 2;
+  const project = v => {
+    const perspective = 9 / (9 - dot(v, N));
+    return [cx + dot(v, R) * scale * perspective, cy - dot(v, U) * scale * perspective];
+  };
+  const line = (a, b) => { const p = project(a), q = project(b); g.beginPath(); g.moveTo(p[0], p[1]); g.lineTo(q[0], q[1]); g.stroke(); };
+  // Reference floor and fixed reference axes.
+  g.strokeStyle = css('--grid'); g.lineWidth = 1;
+  for (let d = -3; d <= 3; d++) { line([-3, d, -1.5], [3, d, -1.5]); line([d, -3, -1.5], [d, 3, -1.5]); }
+  const q = viewQuat();
+  // Board: only faces toward the camera are drawn, which is enough for a convex box.
+  const a = 2.1, b = 1.35, c = 0.1;
+  const corners = [[-a,-b,-c],[a,-b,-c],[a,b,-c],[-a,b,-c],[-a,-b,c],[a,-b,c],[a,b,c],[-a,b,c]].map(p => rotate(q, p));
+  const faces = [[[4,5,6,7],[0,0,1]], [[3,2,1,0],[0,0,-1]], [[0,1,5,4],[0,-1,0]], [[1,2,6,5],[1,0,0]], [[2,3,7,6],[0,1,0]], [[3,0,4,7],[-1,0,0]]];
+  const polygon = points => {
+    g.beginPath();
+    points.forEach((p, i) => { const s = project(p); i ? g.lineTo(s[0], s[1]) : g.moveTo(s[0], s[1]); });
+    g.closePath();
+  };
+  const axes = [[[1,0,0],'X',css('--x')], [[0,1,0],'Y',css('--y')], [[0,0,1],'Z',css('--z')]];
+  const drawAxis = ([dir, name, color]) => {
+    const end = rotate(q, dir.map(v => v * 3));
+    g.strokeStyle = color; g.lineWidth = 3; g.lineCap = 'round';
+    line([0, 0, 0], end);
+    const label = project(rotate(q, dir.map(v => v * 3.3)));
+    g.fillStyle = css('--ink'); g.font = '600 13px system-ui, "Segoe UI", sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.fillText('+' + name, label[0], label[1]);
+  };
+  // Axes that point away from the camera are hidden behind the board.
+  const axisDepth = axis => dot(rotate(q, axis[0]), N);
+  axes.filter(axis => axisDepth(axis) < 0).forEach(drawAxis);
+  for (const [index, normal] of faces) {
+    const n = rotate(q, normal);
+    if (dot(n, N) <= 0) continue;
+    polygon(index.map(i => corners[i]));
+    g.fillStyle = normal[2] === 1 ? css('--board') : css('--board-side');
+    g.fill();
+    g.strokeStyle = css('--board-side'); g.lineWidth = 1; g.stroke();
+    if (normal[2] === 1) {
+      polygon([[-.45,-.45,c],[.45,-.45,c],[.45,.45,c],[-.45,.45,c]].map(p => rotate(q, p)));
+      g.fillStyle = css('--chip'); g.fill();
+    }
+  }
+  axes.filter(axis => axisDepth(axis) >= 0).forEach(drawAxis);
+}
+
+function drawChart(canvas, opts) {
+  const { g, w, h } = fit(canvas);
+  const left = 40, right = 54, top = 8, bottom = 18;
+  const pw = w - left - right, ph = h - top - bottom;
+  const now = performance.now();
+  const xOf = t => left + pw * (1 - (now - t) / WINDOW_MS);
+  const { yMin, yMax, ticks } = opts.scale();
+  const yOf = v => top + ph * (1 - (v - yMin) / (yMax - yMin));
+  g.font = FONT; g.textBaseline = 'middle'; g.textAlign = 'right';
+  if (opts.band) {
+    g.fillStyle = css('--band');
+    const [a, b] = opts.band;
+    g.fillRect(left, yOf(b), pw, yOf(a) - yOf(b));
+  }
+  for (const v of ticks) {
+    g.strokeStyle = v === 0 ? css('--axis') : css('--grid'); g.lineWidth = 1;
+    g.beginPath(); g.moveTo(left, yOf(v) + .5); g.lineTo(left + pw, yOf(v) + .5); g.stroke();
+    g.fillStyle = css('--muted'); g.fillText(v, left - 6, yOf(v));
+  }
+  g.textAlign = 'center'; g.textBaseline = 'alphabetic'; g.fillStyle = css('--muted');
+  for (let s = 0; s <= 15; s += 5) g.fillText(s === 0 ? '지금' : '-' + s + 's', left + pw * (1 - s / 15), h - 3);
+  g.save();
+  g.beginPath(); g.rect(left, 0, pw, h); g.clip();
+  opts.paint(g, xOf, yOf, now);
+  g.restore();
+  if (opts.labels) opts.labels(g, left + pw, yOf);
+  // Hover crosshair and readout.
+  const tip = canvas.parentElement.querySelector('.tip');
+  const mouse = canvas._mouseX;
+  if (mouse == null || mouse < left || mouse > left + pw) { tip.style.display = 'none'; return; }
+  const t = now - WINDOW_MS * (1 - (mouse - left) / pw);
+  const text = opts.readout(t);
+  if (!text) { tip.style.display = 'none'; return; }
+  g.strokeStyle = css('--axis'); g.lineWidth = 1;
+  g.beginPath(); g.moveTo(mouse + .5, top); g.lineTo(mouse + .5, top + ph); g.stroke();
+  tip.textContent = text;
+  tip.style.display = 'block';
+  const width = tip.offsetWidth;
+  tip.style.left = Math.max(0, Math.min(w - width, mouse + 10)) + 'px';
+}
+
+const SERIES = [['roll', '--s1', 'Roll'], ['pitch', '--s2', 'Pitch'], ['yaw', '--s3', 'Yaw']];
+function drawAttitude() {
+  const samples = state.att;
+  drawChart($('attChart'), {
+    scale() {
+      let peak = 0;
+      for (const s of samples) peak = Math.max(peak, Math.abs(s.roll), Math.abs(s.pitch), Math.abs(s.yaw));
+      const limit = [15, 30, 60, 90, 180].find(v => peak <= v) || 180;
+      return { yMin: -limit, yMax: limit, ticks: [-limit, -limit / 2, 0, limit / 2, limit] };
+    },
+    paint(g, xOf, yOf) {
+      for (const [key, color] of SERIES) {
+        g.strokeStyle = css(color); g.lineWidth = 2; g.lineJoin = 'round';
+        g.beginPath();
+        let prev = null;
+        for (const s of samples) {
+          // Break the line on angle wrap and on gaps in the stream.
+          const jump = !prev || Math.abs(s[key] - prev[key]) > 180 || s.t - prev.t > 400;
+          jump ? g.moveTo(xOf(s.t), yOf(s[key])) : g.lineTo(xOf(s.t), yOf(s[key]));
+          prev = s;
+        }
+        g.stroke();
+      }
+    },
+    labels(g, x, yOf) {
+      const last = samples[samples.length - 1];
+      if (!last || performance.now() - last.t > 500) return;
+      const placed = SERIES.map(([key, , name]) => ({ name, y: yOf(last[key]) })).sort((a, b) => a.y - b.y);
+      for (let i = 1; i < placed.length; i++) placed[i].y = Math.max(placed[i].y, placed[i - 1].y + 14);
+      g.textAlign = 'left'; g.textBaseline = 'middle'; g.fillStyle = css('--ink-2'); g.font = FONT;
+      for (const p of placed) g.fillText(p.name, x + 6, p.y);
+    },
+    readout(t) {
+      let best = null;
+      for (const s of samples) if (!best || Math.abs(s.t - t) < Math.abs(best.t - t)) best = s;
+      if (!best || Math.abs(best.t - t) > 300) return '';
+      return `Roll ${best.roll.toFixed(1)}°  Pitch ${best.pitch.toFixed(1)}°  Yaw ${best.yaw.toFixed(1)}°`;
+    },
+  });
+}
+
+function drawPwm() {
+  const points = state.pwm;
+  const { min, max } = state.range;
+  drawChart($('pwmChart'), {
+    band: min != null && max != null ? [Math.min(min, max), Math.max(min, max)] : null,
+    scale: () => ({ yMin: 0, yMax: 100, ticks: [0, 50, 100] }),
+    paint(g, xOf, yOf, now) {
+      if (!points.length) return;
+      g.strokeStyle = css('--s1'); g.lineWidth = 2; g.lineJoin = 'round';
+      g.beginPath();
+      points.forEach((p, i) => {
+        if (i === 0) g.moveTo(xOf(p.t), yOf(p.pct));
+        else { g.lineTo(xOf(p.t), yOf(points[i - 1].pct)); g.lineTo(xOf(p.t), yOf(p.pct)); }
+      });
+      if (state.connected) g.lineTo(xOf(now), yOf(points[points.length - 1].pct));
+      g.stroke();
+    },
+    readout(t) {
+      let found = null;
+      for (const p of points) if (p.t <= t) found = p;
+      return found ? `${found.pct}% (PWM ${toPwm(found.pct)})` : '';
+    },
+  });
+}
+
+function drawWave() {
+  const { g, w, h } = fit($('wave'));
+  const pct = state.connected && state.ready ? state.reported.pct : 0;
+  const periods = 6, high = 8, low = h - 16, period = (w - 8) / periods, duty = pct / 100;
+  g.strokeStyle = css('--grid'); g.lineWidth = 1;
+  g.beginPath(); g.moveTo(0, low + .5); g.lineTo(w, low + .5); g.stroke();
+  g.strokeStyle = css('--s1'); g.lineWidth = 2; g.lineJoin = 'round';
+  g.beginPath();
+  g.moveTo(4, duty > 0 ? high : low);
+  for (let i = 0; i < periods; i++) {
+    const x = 4 + i * period;
+    if (duty > 0) { g.lineTo(x, high); g.lineTo(x + period * duty, high); }
+    if (duty < 1) { g.lineTo(x + period * duty, low); g.lineTo(x + period, low); }
+  }
+  g.stroke();
+  g.font = FONT; g.fillStyle = css('--muted'); g.textAlign = 'left'; g.textBaseline = 'alphabetic';
+  g.fillText('설정값으로 그린 도식 · 주기 약 1.02 ms (오실로스코프 측정 아님)', 4, h - 1);
+}
+
+function trim(list, now) {
+  // Keep one older point so a step line still starts at the left edge.
+  while (list.length > 2 && now - list[1].t > WINDOW_MS) list.shift();
+}
+function frame() {
+  const now = performance.now();
+  trim(state.att, now); trim(state.pwm, now);
+  refreshImu(now);
+  drawBoard(); drawAttitude(); drawPwm(); drawWave();
+  requestAnimationFrame(frame);
+}
+
+// --- Wiring ---
+$('connectBtn').onclick = () => state.connected ? disconnect() : connect();
+$('startBtn').onclick = e => { start(); e.currentTarget.blur(); };
+$('stopBtn').onclick = e => { stop(); e.currentTarget.blur(); };
+$('dirF').onclick = e => { setDir('F'); e.currentTarget.blur(); };
+$('dirR').onclick = e => { setDir('R'); e.currentTarget.blur(); };
+$('slider').oninput = e => onSliderChange(e.target.value);
+$('number').oninput = e => onSliderChange(e.target.value);
+$('number').onblur = () => { $('number').value = commanded(); };
+$('yawBtn').onclick = () => {
+  state.yawZero = Math.atan2(2 * (state.q[0]*state.q[3] + state.q[1]*state.q[2]), 1 - 2 * (state.q[2]**2 + state.q[3]**2));
+  state.att = [];
+};
+$('markMin').onclick = () => { state.range.min = commanded(); saveRange(); };
+$('markMax').onclick = () => { state.range.max = commanded(); saveRange(); };
+$('markClear').onclick = () => { state.range = { min: null, max: null }; saveRange(); };
+for (const canvas of [$('attChart'), $('pwmChart')]) {
+  canvas.addEventListener('mousemove', e => { canvas._mouseX = e.offsetX; });
+  canvas.addEventListener('mouseleave', () => { canvas._mouseX = null; });
+}
+document.addEventListener('keydown', e => {
+  if ((e.key === ' ' || e.key === 'Escape') && state.connected && state.ready) {
+    e.preventDefault();
+    stop();
+  }
+});
+window.addEventListener('pagehide', () => { if (state.writer) send('STOP'); });
+
+loadRange();
+refreshUi();
+if (!('serial' in navigator)) {
+  $('connectBtn').disabled = true;
+  banner('이 브라우저는 Web Serial을 지원하지 않습니다. Chrome 또는 Edge로 여세요.');
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

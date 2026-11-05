@@ -1,0 +1,21 @@
+{
+  "name": "MPU6050_light",
+  "version": "1.2.1",
+  "upstream": "https://github.com/rfetick/MPU6050_light",
+  "installation": ".tools/arduino-user/libraries/MPU6050_light",
+  "source_sha256": {
+    "src/MPU6050_light.cpp": "FC89BC830A8D6CF9282303BF26CDFC4174D58D5440EFF6A510572954A619C865",
+    "src/MPU6050_light.h": "1475B15A03C84DA1900E13C1DCD1A0F9D52B84E20092DBFC9406B2F15657D482"
+  },
+  "calibration": "manual 500-sample single-position accel/gyro offset; no EEPROM writes",
+  "attitude_filter": {
+    "name": "Adafruit AHRS",
+    "source_sha256": {
+      "Adafruit_AHRS_Madgwick.cpp": "75DFED2812359028393FA6597EACAAF211AC545E674361CC127A8D46FB2FEEEE",
+      "Adafruit_AHRS_Madgwick.h": "CAC23DD27091F140DFC83BB8059137D83B10CC02B0F1B50C996081606060CED0"
+    },
+    "implementation": "Adafruit_Madgwick::updateIMU",
+    "upstream": "https://github.com/adafruit/Adafruit_AHRS",
+    "version": "2.4.0"
+  }
+}
