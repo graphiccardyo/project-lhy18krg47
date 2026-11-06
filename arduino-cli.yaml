@@ -1,6 +1,0 @@
-directories:
-  data: C:/Users/avalo/AppData/Local/Arduino15
-  downloads: C:/Users/avalo/Documents/ChatGPT/자동제어/.tools/downloads
-  user: C:/Users/avalo/Documents/ChatGPT/자동제어/.tools/arduino-user
-updater:
-  enable_notification: false

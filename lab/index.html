@@ -1,0 +1,366 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Aeropendulum 실험실 — 시스템 식별</title>
+<style>
+:root {
+  color-scheme: light;
+  --page: #f9f9f7; --surface: #fcfcfb; --ink: #0b0b0b; --ink-2: #52514e; --muted: #6f6d68;
+  --grid: #e1e0d9; --axis: #c3c2b7; --border: rgba(11,11,11,.12);
+  --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #8a5cd1; --s5: #9b9a93;
+  --good: #0ca30c; --warn: #d99a06; --crit: #d03b3b; --on-crit: #fff; --hl: rgba(42,120,214,.10);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --page: #0d0d0d; --surface: #1a1a19; --ink: #f0efec; --ink-2: #c3c2b7; --muted: #a3a29a;
+    --grid: #2c2c2a; --axis: #383835; --border: rgba(255,255,255,.12);
+    --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #9d74e0; --s5: #6f6d68; --hl: rgba(57,135,229,.16);
+  }
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body { margin: 0; background: var(--page); color: var(--ink); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", "Malgun Gothic", sans-serif; }
+header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; padding: 12px 18px; position: sticky; top: 0; background: var(--page); z-index: 5; border-bottom: 1px solid var(--border); }
+h1 { font-size: 18px; margin: 0; font-weight: 650; }
+h2 { font-size: 15px; margin: 0 0 2px; font-weight: 650; }
+h3 { font-size: 13.5px; margin: 6px 0 0; font-weight: 650; color: var(--ink-2); }
+.spacer { flex: 1; }
+.pill { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--ink-2); white-space: nowrap; }
+.dot { width: 9px; height: 9px; border-radius: 50%; background: var(--axis); flex: none; }
+.dot.good { background: var(--good); } .dot.warn { background: var(--warn); } .dot.crit { background: var(--crit); }
+button { font: inherit; padding: 6px 12px; border-radius: 7px; border: 1px solid var(--border); background: var(--surface); color: var(--ink); cursor: pointer; }
+button:hover:not(:disabled) { border-color: var(--ink-2); }
+button:disabled { opacity: .45; cursor: not-allowed; }
+button.primary { background: var(--s1); border-color: transparent; color: #fff; font-weight: 600; }
+button.stop { background: var(--crit); border-color: transparent; color: var(--on-crit); font-weight: 700; font-size: 16px; padding: 8px 22px; }
+button.small { padding: 3px 8px; font-size: 12.5px; }
+input[type=number], input[type=text], select { font: inherit; padding: 5px 7px; border-radius: 7px; border: 1px solid var(--border); background: var(--surface); color: var(--ink); }
+input[type=number] { width: 82px; }
+main { display: grid; grid-template-columns: minmax(380px, 470px) minmax(0, 1fr); gap: 14px; padding: 14px 18px 18px; max-width: 1700px; margin: auto; align-items: start; }
+@media (max-width: 1050px) { main { grid-template-columns: minmax(0, 1fr); } }
+section, .panel { background: var(--surface); border: 1px solid var(--border); border-radius: 11px; padding: 12px 14px; min-width: 0; }
+.col { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.grid2 { display: grid; grid-template-columns: auto 1fr; gap: 6px 10px; align-items: center; }
+.grid2 label { color: var(--ink-2); font-size: 13px; }
+.sub { color: var(--ink-2); font-size: 13px; }
+.note { color: var(--muted); font-size: 12.5px; margin: 4px 0; }
+.tabs { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 10px; }
+.tabs button { border-radius: 7px; font-size: 13px; padding: 5px 10px; }
+.tabs button[aria-selected=true] { background: var(--ink); color: var(--surface); border-color: var(--ink); font-weight: 600; }
+.tab { display: none; flex-direction: column; gap: 10px; }
+.tab.active { display: flex; }
+.step { border-left: 3px solid var(--axis); padding: 2px 0 2px 10px; display: flex; flex-direction: column; gap: 6px; }
+.step.done { border-left-color: var(--good); }
+.check { display: inline-flex; align-items: center; gap: 5px; font-size: 13px; color: var(--ink-2); }
+.readouts { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; }
+@media (max-width: 1300px) { .readouts { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+.stat { border: 1px solid var(--border); border-radius: 8px; padding: 5px 9px; }
+.stat b { display: block; font-size: 22px; font-weight: 650; line-height: 1.2; font-variant-numeric: tabular-nums; }
+.stat span { font-size: 12px; color: var(--ink-2); }
+.stat.big b { font-size: 30px; }
+canvas { display: block; width: 100%; }
+.c-main { height: 300px; } .c-sub { height: 150px; } .c-res { height: 230px; }
+table { border-collapse: collapse; width: 100%; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+th, td { border-bottom: 1px solid var(--border); padding: 3px 6px; text-align: right; white-space: nowrap; }
+th { color: var(--ink-2); font-weight: 600; }
+td:first-child, th:first-child { text-align: left; }
+tbody tr:hover { background: var(--hl); cursor: default; }
+tr.clickable { cursor: pointer !important; }
+.tablewrap { max-height: 240px; overflow: auto; border: 1px solid var(--border); border-radius: 8px; }
+progress { width: 100%; height: 10px; }
+#log { height: 150px; overflow: auto; font: 12px/1.4 ui-monospace, Consolas, monospace; white-space: pre-wrap; color: var(--ink-2); background: var(--page); border: 1px solid var(--border); border-radius: 8px; padding: 6px 8px; }
+#log .e { color: var(--crit); } #log .ok { color: var(--good); } #log .tx { color: var(--s1); }
+#banner { display: none; margin: 10px 18px 0; padding: 8px 12px; border-radius: 8px; border: 1px solid var(--crit); }
+#banner.show { display: block; }
+.kv { font: 12.5px/1.5 ui-monospace, Consolas, monospace; background: var(--page); border: 1px solid var(--border); border-radius: 8px; padding: 6px 9px; white-space: pre-wrap; overflow-x: auto; }
+.bar { height: 8px; border-radius: 4px; background: var(--grid); overflow: hidden; }
+.bar > i { display: block; height: 100%; width: 0; background: var(--s1); }
+.badge { font-size: 12px; padding: 1px 7px; border-radius: 10px; border: 1px solid var(--border); color: var(--ink-2); }
+.badge.good { border-color: var(--good); color: var(--good); } .badge.crit { border-color: var(--crit); color: var(--crit); } .badge.warn { border-color: var(--warn); color: var(--warn); }
+input[type=range] { width: 100%; accent-color: var(--s1); }
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: 7px; overflow: hidden; }
+.seg button { border: 0; border-radius: 0; }
+.seg button[aria-pressed=true] { background: var(--ink); color: var(--surface); font-weight: 600; }
+details summary { cursor: pointer; color: var(--ink-2); font-size: 13px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Aeropendulum 실험실</h1>
+  <button id="connectBtn" class="primary">보드 연결</button>
+  <button id="simBtn" title="하드웨어 없이 가상 진자로 UI를 연습합니다">시뮬레이터</button>
+  <span class="pill"><span id="dotLink" class="dot"></span><span id="txtLink">연결 안 됨</span></span>
+  <span class="pill"><span id="dotImu" class="dot"></span>IMU</span>
+  <span class="pill"><span id="dotCal" class="dot"></span><span id="txtCal">보정</span></span>
+  <span class="pill"><span id="dotZero" class="dot"></span><span id="txtZero">영점</span></span>
+  <span class="pill"><span id="dotState" class="dot"></span><span id="txtState">대기</span></span>
+  <span id="benchBadge" class="badge warn" hidden title="센서 없이 시험 로직만 실행, 모터 핀은 항상 LOW">벤치 모드 · 모터 출력 없음</span>
+  <span class="spacer"></span>
+  <span class="sub" id="fwId"></span>
+  <button id="stopBtn" class="stop" title="Esc 또는 Space">정지 STOP</button>
+</header>
+<div id="banner"></div>
+
+<main>
+  <div class="col">
+    <section>
+      <div class="tabs" role="tablist">
+        <button data-tab="tSensor" aria-selected="true">① 센서·보정</button>
+        <button data-tab="tManual">② 수동 구동</button>
+        <button data-tab="tStatic">③ 시험1 정적 특성</button>
+        <button data-tab="tDyn">④ 시험2 동적 응답</button>
+        <button data-tab="tData">⑤ 데이터·추정</button>
+        <button data-tab="tPid">⑥ 폐루프·PID</button>
+      </div>
+
+      <!-- ① 센서·보정 -->
+      <div class="tab active" id="tSensor">
+        <div class="step" id="stepAxis">
+          <h2>1. 회전축(피벗 축) 설정</h2>
+          <div class="note">진자가 도는 축과 일치하는 센서 축을 고릅니다. 모르면 <b>자동 감지</b>를 누르고 3초 동안 진자를 손으로 흔드세요. 영점 설정 전에 먼저 맞춥니다.</div>
+          <div class="row">
+            <span class="seg" id="axisSeg"><button data-v="X">X</button><button data-v="Y">Y</button><button data-v="Z">Z</button></span>
+            <span class="seg" id="signSeg"><button data-v="+">+</button><button data-v="-">−</button></span>
+            <button id="axisApplyBtn">적용</button>
+            <button id="axisAutoBtn">자동 감지</button>
+            <span id="axisMsg" class="sub"></span>
+          </div>
+        </div>
+
+        <div class="step" id="stepCal">
+          <h2>2. 정지 자세 보정 + 영점</h2>
+          <div class="note">모터를 끈 채 진자를 <b>매달린 상태로 완전히 멈춘</b> 뒤 누릅니다. 3초 뒤부터 약 5초(1000샘플) 동안 <b>자이로 바이어스</b>를 구합니다. 정지해 있기만 하면 자세는 상관없습니다. 이어서 그 자세를 θ=0으로 저장합니다. 가속도 오프셋은 저장된 값을 씁니다. 자이로 바이어스는 온도에 따라 변하므로 실험 직전에 다시 하는 것이 좋습니다.</div>
+          <div class="grid2">
+            <label>가속도(오프셋 보정 후)</label><span id="corrAcc" class="sub">—</span>
+            <label>상태</label><span><span id="badgeNorm" class="badge">|a| ≈ 1 g</span> <span id="badgeStill" class="badge">정지</span></span>
+            <label>각속도(보정 전)</label><span id="rawGyro" class="sub">—</span>
+          </div>
+          <div class="row">
+            <button id="calBtn" class="primary">정지 보정 + 영점</button>
+            <label class="check"><input id="calZero" type="checkbox" checked> 완료 후 영점도 설정</label>
+            <button id="calClearBtn">자이로 보정 해제</button>
+          </div>
+          <div class="sub" id="calMsg"></div>
+          <div class="bar"><i id="calBar"></i></div>
+          <div class="kv" id="calVals">보정값: —</div>
+        </div>
+
+        <div class="step" id="stepZero">
+          <h2>3. 영점 · 부호 확인</h2>
+          <div class="note">영점은 2단계에서 함께 설정됩니다. 다시 잡을 때만 아래 버튼을 쓰세요. 손으로 진자를 <b>추력 방향</b>으로 들어 올렸을 때 θ가 <b>+</b>로 커지는지 확인하고, 반대면 부호를 뒤집으세요.</div>
+          <div class="row">
+            <button id="zeroBtn">현재 자세를 θ=0으로</button>
+            <button id="signFlipBtn">부호 반전</button>
+            <span class="sub">현재 θ = <b id="zeroTheta">—</b>°</span>
+          </div>
+        </div>
+
+        <div class="step">
+          <h2>4. Madgwick 필터 / 센서 필터</h2>
+          <div class="grid2">
+            <label for="beta">β (0.001–1)</label>
+            <span class="row"><input id="beta" type="number" min="0.001" max="1" step="0.005" value="0.02"><button id="betaBtn">적용</button><span class="note">기본 0.02. 작을수록 자이로 신뢰↑(진동 강건, 느린 보정). 0.1 이상은 진동이 클 때 각도가 떠내려갑니다.</span></span>
+            <label for="dlpf">MPU6050 DLPF</label>
+            <span class="row"><select id="dlpf">
+              <option value="0">0 — 260 Hz</option><option value="1">1 — 184 Hz</option><option value="2">2 — 94 Hz</option>
+              <option value="3">3 — 44 Hz</option><option value="4" selected>4 — 21 Hz (기본)</option><option value="5">5 — 10 Hz (진동 심할 때)</option><option value="6">6 — 5 Hz</option>
+            </select><button id="dlpfBtn">적용</button></span>
+          </div>
+          <div class="note">오른쪽 그래프의 회색 선은 가속도만으로 구한 각도(θ<sub>acc</sub>)입니다. 펌웨어는 Madgwick에 가속도를 넣기 전에 약 5 Hz 저역통과하고, |a|가 1 g±0.15를 벗어나면 그 순간은 자이로만 적분합니다. 상단의 <b>게이트 %</b>가 계속 높거나 <b>포화</b>가 보이면 진동 절연이 먼저입니다. 센서 범위: ±16 g / ±2000 °/s.</div>
+          <details><summary>가속도 오프셋 · 수평면 보정 (센서를 교체했을 때)</summary>
+            <div class="grid2" style="margin-top:6px">
+              <label>가속도 오프셋</label>
+              <span class="row">x <input id="aoX" type="number" step="0.1" style="width:72px"> y <input id="aoY" type="number" step="0.1" style="width:72px"> z <input id="aoZ" type="number" step="0.1" style="width:72px"> mg</span>
+              <span></span><span class="row"><button id="accOffBtn" class="small">적용</button><button id="accDefBtn" class="small">저장값으로 (−17.1, −22.0, +147.5)</button></span>
+            </div>
+            <div class="note">기본값은 2026-10-31에 같은 GY-521 모듈로 수평 보정해 저장한 값입니다(<code>data/calibration/mpu6050-calibration-20261031.json</code>).</div>
+            <div class="row"><button id="calFlatBtn" class="small">수평면 보정 (가속도+자이로)</button><span class="note">센서 +Z를 위로 하여 수평면에 평평하게 놓고 실행. 가속도 오프셋을 새로 측정합니다.</span></div>
+          </details>
+          <details><summary>센서 공장값으로 초기화</summary>
+            <div class="row" style="margin-top:6px"><button id="factoryBtn">EEPROM 설정 초기화</button><span class="note">자이로 보정·영점·축 설정이 지워지고, 가속도 오프셋은 저장값으로 돌아갑니다.</span></div>
+          </details>
+        </div>
+      </div>
+
+      <!-- ② 수동 구동 -->
+      <div class="tab" id="tManual">
+        <h2>안전 한계 · 공통 설정</h2>
+        <div class="grid2">
+          <label for="uMax">최대 입력</label><span class="row"><input id="uMax" type="number" min="0" max="255" step="1" value="210"> PWM <span class="note">(0–255)</span></span>
+          <label for="aLim">각도 한계</label><span class="row"><input id="aLim" type="number" min="5" max="180" step="1" value="100"> ° <span class="note">초과 시 즉시 정지</span></span>
+          <label for="allowRev">역추력</label><span class="check"><input id="allowRev" type="checkbox"> 음수 입력(역회전) 허용</span>
+          <label for="benchMode">벤치 모드</label><span class="check"><input id="benchMode" type="checkbox"> 드라이런 — 센서 없이, 모터를 돌리지 않고 시험 로직·기록만 확인</span>
+          <label for="rate">샘플링</label><span class="row"><select id="rate"><option value="1">200 Hz (5 ms)</option><option value="2" selected>100 Hz (10 ms)</option><option value="4">50 Hz (20 ms)</option></select></span>
+        </div>
+        <div class="row"><button id="limApplyBtn">한계·샘플링 적용</button><span id="limMsg" class="note"></span></div>
+
+        <h2 style="margin-top:6px">수동 입력</h2>
+        <div class="row"><span class="big"><b id="manVal" style="font-size:28px">0</b> PWM</span><span class="sub" id="manDuty">듀티 0.0 %</span></div>
+        <input id="manSlider" type="range" min="0" max="255" step="1" value="0">
+        <div class="row">
+          <label class="check"><input id="manLive" type="checkbox"> 슬라이더 즉시 출력</label>
+          <input id="manNum" type="number" min="-255" max="255" step="1" value="0">
+          <button id="manSetBtn" class="primary">출력</button>
+          <button id="manZeroBtn">0</button>
+        </div>
+        <div class="note">통신이 1초 이상 끊기면 보드가 스스로 정지합니다. Esc/Space는 언제든 정지.</div>
+        <h2 style="margin-top:6px">수동 기록</h2>
+        <div class="row"><button id="recBtn">기록 시작</button><span id="recMsg" class="sub"></span></div>
+      </div>
+
+      <!-- ③ 시험1 정적 특성 -->
+      <div class="tab" id="tStatic">
+        <h2>시험 1 — 입력 PWM ↔ 출력 각도 (정적 특성)</h2>
+        <div class="note">입력을 계단식으로 올리며 각 단계의 정상상태 각도를 평균합니다. 결과로 사각지대(dead zone)와 운전점 부근 기울기(국소 이득)를 얻고, 시험 2의 운전점을 고릅니다.</div>
+        <div class="grid2">
+          <label>입력 범위</label><span class="row"><input id="stStart" type="number" min="0" max="255" step="1" value="30"> → <input id="stEnd" type="number" min="0" max="255" step="1" value="180"> PWM</span>
+          <label>증분</label><span class="row"><input id="stInc" type="number" min="1" max="255" step="1" value="10"> PWM</span>
+          <label>단계 유지</label><span class="row"><input id="stDwell" type="number" min="1" step="0.5" value="8"> s</span>
+          <label>평균 구간</label><span class="row">단계 후반 <input id="stSettle" type="number" min="10" max="90" step="5" value="50"> % <span class="note">앞부분 과도응답 제외</span></span>
+        </div>
+        <div class="row"><button id="stRunBtn" class="primary">시험 1 시작</button><span id="stInfo" class="sub"></span></div>
+        <div class="bar"><i id="stBar"></i></div>
+        <canvas id="cStatic" class="c-res"></canvas>
+        <div class="row"><span class="sub" id="stFit"></span></div>
+        <div class="tablewrap"><table id="stTable"><thead><tr><th>#</th><th>PWM</th><th>듀티 %</th><th>θ<sub>ss</sub> °</th><th>σ °</th><th>dθ/dPWM</th></tr></thead><tbody></tbody></table></div>
+        <div class="row"><span class="note">행을 클릭하면 그 입력을 시험 2 운전점으로 사용합니다.</span><button id="stCsvBtn" class="small">정적 특성 CSV</button></div>
+      </div>
+
+      <!-- ④ 시험2 동적 응답 -->
+      <div class="tab" id="tDyn">
+        <h2>시험 2 — 개루프 동적 응답 (운전점 주변)</h2>
+        <div class="note">운전점 u<sub>0</sub>에서 먼저 정착(pre)시킨 뒤 작은 진폭으로 가진합니다. 비선형(sinθ, 추력 ∝ 속도²)이므로 진폭은 작게(±5~20 PWM) 유지하세요. 같은 조건을 두 번 기록하면 하나는 추정용, 하나는 검증용으로 씁니다.</div>
+        <div class="grid2">
+          <label for="u0">운전점 u<sub>0</sub></label><span class="row"><input id="u0" type="number" min="0" max="255" step="1" value="110"> PWM <span class="sub" id="u0V"></span></span>
+          <label for="pre">정착(pre)</label><span class="row"><input id="pre" type="number" min="0" step="0.5" value="12"> s <span class="note">진자 흔들림이 멎을 만큼 충분히</span></span>
+        </div>
+        <div class="row"><span class="seg" id="dynSeg"><button data-v="STEP" aria-pressed="true">스텝</button><button data-v="CHIRP">스윕 사인</button><button data-v="PRBS">PRBS</button></span></div>
+        <div class="grid2" data-dyn="STEP">
+          <label>스텝 크기 Δu</label><span class="row"><input id="stepDu" type="number" step="1" value="12"> PWM</span>
+          <label>스텝 유지</label><span class="row"><input id="stepHold" type="number" min="0.5" step="0.5" value="10"> s</span>
+          <label>복귀 후 기록</label><span class="row"><input id="stepPost" type="number" min="0" step="0.5" value="10"> s <span class="note">u₀로 되돌아가는 하강 스텝</span></span>
+        </div>
+        <div class="grid2" data-dyn="CHIRP" hidden>
+          <label>진폭</label><span class="row">± <input id="chAmp" type="number" min="1" max="255" step="1" value="12"> PWM</span>
+          <label>주파수</label><span class="row"><input id="chF0" type="number" min="0.01" step="0.01" value="0.1"> → <input id="chF1" type="number" min="0.02" step="0.1" value="3"> Hz</span>
+          <label>지속</label><span class="row"><input id="chDur" type="number" min="5" step="5" value="60"> s</span>
+          <label>스윕</label><span class="row"><select id="chLog"><option value="1">로그(지수)</option><option value="0">선형</option></select></span>
+        </div>
+        <div class="grid2" data-dyn="PRBS" hidden>
+          <label>진폭</label><span class="row">± <input id="prAmp" type="number" min="1" max="255" step="1" value="12"> PWM</span>
+          <label>비트 주기</label><span class="row"><input id="prBit" type="number" min="10" step="10" value="150"> ms <span class="note">대략 1/(3·f<sub>max</sub>)</span></span>
+          <label>지속</label><span class="row"><input id="prDur" type="number" min="5" step="5" value="60"> s</span>
+        </div>
+        <div class="row"><button id="dynRunBtn" class="primary">시험 2 시작</button><span id="dynInfo" class="sub"></span></div>
+        <div class="bar"><i id="dynBar"></i></div>
+        <div class="kv" id="dynResult" hidden></div>
+      </div>
+
+      <!-- ⑥ 폐루프·PID -->
+      <div class="tab" id="tPid">
+        <h2>제어기 이득</h2>
+        <div class="note">u = ff + Kp·e + Ki·∫e − Kd·ω<sub>f</sub> (e = 기준 − θ, D는 자이로 각속도 10 Hz 저역통과), 출력 포화 0–최대 PWM + 적분 정지. 선택: 출력단 노치(3.5 Hz 구조 공진 억제). 설계 근거: <code>analysis/pid_design.py</code> (식별 모델 K 0.12–0.21 × 공진 ±10%에서 Ms ≤ 1.6).</div>
+        <div class="row"><select id="pidPreset">
+          <option value="">— 설계 프리셋 —</option>
+          <option value="P">P (목표 4: 폐루프 스텝, Kp 3.7)</option>
+          <option value="PI">PI (노치 없음, 느림·안전)</option>
+          <option value="PIN" selected>PI + 노치 (권장)</option>
+          <option value="PIDN">PID + 노치 (Td=0.05Ti)</option>
+          <option value="ZNPID">Z-N PID (모델 계산값 — 불안정 위험)</option>
+          <option value="ZNPIDN">Z-N PID + 노치</option>
+        </select><button id="pidPresetBtn" class="small">불러오기</button></div>
+        <div class="grid2">
+          <label>Kp</label><span class="row"><input id="kp" type="number" min="0" step="0.1" value="7.85"> PWM/°</span>
+          <label>Ki</label><span class="row"><input id="ki" type="number" min="0" step="0.5" value="23.9"> PWM/(°·s) <span class="note" id="tiTxt"></span></span>
+          <label>Kd</label><span class="row"><input id="kd" type="number" min="0" step="0.01" value="0"> PWM/(°/s) <span class="note" id="tdTxt"></span></span>
+          <label>피드포워드 ff</label><span class="row"><input id="ff" type="number" min="0" max="255" step="1" value="150"> PWM <span class="note">기준 근처 평형 PWM (정적 특성에서)</span></span>
+          <label>노치</label><span class="row"><label class="check"><input id="notchOn" type="checkbox" checked> 사용</label> f <input id="nf" type="number" min="0.1" max="20" step="0.01" value="3.47" style="width:70px"> Hz ζz <input id="nzz" type="number" min="0" max="2" step="0.01" value="0.15" style="width:62px"> ζp <input id="nzp" type="number" min="0.01" max="2" step="0.05" value="0.7" style="width:62px"></span>
+        </div>
+        <div class="row"><button id="pidApplyBtn" class="primary">이득 적용</button><span class="sub" id="pidMsg"></span></div>
+        <div class="kv" id="pidPred">모델 예측: —</div>
+
+        <h2 style="margin-top:6px">기준 유지 (수동 폐루프)</h2>
+        <div class="row"><input id="refVal" type="number" step="0.5" value="20" style="width:80px"> °
+          <button id="refBtn">유지 시작 / 기준 변경</button><span class="note">정지는 STOP</span></div>
+
+        <h2 style="margin-top:6px">폐루프 스텝 시험 (목표 4·5)</h2>
+        <div class="grid2">
+          <label>기준</label><span class="row"><input id="clR0" type="number" step="0.5" value="20"> → <input id="clR1" type="number" step="0.5" value="25"> °</span>
+          <label>시간</label><span class="row">유지 <input id="clPre" type="number" min="1" step="0.5" value="8"> s · 스텝 <input id="clHold" type="number" min="1" step="0.5" value="8"> s · 복귀 <input id="clPost" type="number" min="0" step="0.5" value="6"> s</span>
+        </div>
+        <div class="row"><button id="clRunBtn" class="primary">폐루프 스텝 시작</button><span id="clInfo" class="sub"></span></div>
+        <div class="bar"><i id="clBar"></i></div>
+        <div class="kv" id="clResult" hidden></div>
+        <canvas id="cCl" class="c-res" hidden></canvas>
+
+        <h2 style="margin-top:6px">Z-N 한계이득 — 릴레이 시험 (목표 6)</h2>
+        <div class="note">이득을 올려 발산 직전까지 가는 대신, 기준 주변에서 출력을 ±d로 뒤집는 릴레이로 지속 진동을 만들어 Ku = 4d/(πa), Tu = 진동 주기를 구합니다(Åström–Hägglund). 먼저 위 이득으로 기준을 유지하며 평형 PWM을 찾은 뒤 릴레이로 전환합니다. 모델 예측: Tu ≈ 0.30 s(3.3 Hz, 구조 공진), Ku ≈ 8–14 PWM/°.</div>
+        <div class="grid2">
+          <label>기준 / 진폭</label><span class="row"><input id="rlR" type="number" step="0.5" value="20"> ° · d = <input id="rlD" type="number" min="1" max="60" step="1" value="15"> PWM · 히스테리시스 <input id="rlH" type="number" min="0" step="0.05" value="0.1" style="width:70px"> °</span>
+          <label>시간</label><span class="row">유지 <input id="rlPre" type="number" min="2" step="0.5" value="8"> s · 릴레이 <input id="rlDur" type="number" min="2" step="1" value="10"> s</span>
+        </div>
+        <div class="row"><button id="rlRunBtn" class="primary">릴레이 시험 시작</button><span id="rlInfo" class="sub"></span></div>
+        <div class="bar"><i id="rlBar"></i></div>
+        <div class="kv" id="rlResult" hidden></div>
+        <div class="row" id="znBtns" hidden><span class="sub">Z-N 이득 불러오기:</span><button class="small" data-zn="P">P</button><button class="small" data-zn="PI">PI</button><button class="small" data-zn="PID">PID</button></div>
+      </div>
+
+      <!-- ⑤ 데이터·추정 -->
+      <div class="tab" id="tData">
+        <h2>기록</h2>
+        <div class="note">시험이 끝나면 CSV가 자동 저장됩니다(다운로드 폴더). 페이지를 새로 고치면 화면의 기록은 사라집니다.</div>
+        <div class="row"><label class="check"><input id="autoSave" type="checkbox" checked> 시험 종료 시 CSV 자동 저장</label><button id="saveAllBtn" class="small">전체 CSV 저장</button><button id="loadCsvBtn" class="small">CSV 불러오기</button><input id="csvFile" type="file" accept=".csv" multiple hidden></div>
+        <div class="tablewrap"><table id="recTable"><thead><tr><th>이름</th><th>종류</th><th>길이 s</th><th>샘플</th><th>상태</th><th></th></tr></thead><tbody></tbody></table></div>
+
+        <h2 style="margin-top:6px">시험 3 — 전달함수 빠른 추정 · 검증</h2>
+        <div class="note">2차 모델 G(z) = (b₁z⁻ⁿᵏ + b₂z⁻ⁿᵏ⁻¹)/(1 + a₁z⁻¹ + a₂z⁻²)을 ARX → Steiglitz–McBride 반복으로 맞춘 뒤 검증 데이터에 시뮬레이션합니다. 현장 확인용이며, 보고서용 추정은 <code>matlab/aero_sysid.m</code>(tfest)을 사용하세요.</div>
+        <div class="grid2">
+          <label>추정 데이터</label><select id="estSel"></select>
+          <label>검증 데이터</label><select id="valSel"></select>
+          <label>입력 지연 nk</label><span class="row"><input id="nk" type="number" min="1" max="20" step="1" value="1"> 샘플</span>
+        </div>
+        <div class="row"><button id="estBtn" class="primary">추정 · 검증</button></div>
+        <div class="kv" id="estOut">—</div>
+        <canvas id="cEst" class="c-res"></canvas>
+      </div>
+    </section>
+  </div>
+
+  <div class="col">
+    <section>
+      <div class="readouts">
+        <div class="stat big"><span>θ 각도</span><b id="rTheta">—</b></div>
+        <div class="stat"><span>ω 각속도 °/s</span><b id="rOmega">—</b></div>
+        <div class="stat"><span>입력 u (PWM)</span><b id="rU">—</b></div>
+        <div class="stat"><span>듀티 %</span><b id="rDuty">—</b></div>
+        <div class="stat"><span>θ<sub>acc</sub> °</span><b id="rThAcc">—</b></div>
+        <div class="stat"><span>수신율 / 루프</span><b id="rRate" style="font-size:15px">—</b></div>
+      </div>
+    </section>
+    <section>
+      <div class="row" style="margin-bottom:6px">
+        <h2>실시간</h2><span class="spacer"></span>
+        <span class="seg" id="winSeg"><button data-v="10">10 s</button><button data-v="30" aria-pressed="true">30 s</button><button data-v="60">60 s</button></span>
+        <button id="pauseBtn" class="small">일시정지</button>
+      </div>
+      <canvas id="cMain" class="c-main"></canvas>
+      <canvas id="cSub" class="c-sub" style="margin-top:8px"></canvas>
+    </section>
+    <section>
+      <div class="row" style="margin-bottom:6px"><h2>이벤트</h2><span class="spacer"></span>
+        <input id="rawCmd" type="text" placeholder="직접 명령 (예: GET)" style="width:200px"><button id="rawSendBtn" class="small">전송</button></div>
+      <div id="log"></div>
+    </section>
+  </div>
+</main>
+
+<script src="chart.js"></script>
+<script src="sysid.js"></script>
+<script src="sim.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
