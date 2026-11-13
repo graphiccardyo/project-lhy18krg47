@@ -196,7 +196,8 @@ details summary { cursor: pointer; color: var(--ink-2); font-size: 13px; }
           <label for="benchMode">벤치 모드</label><span class="check"><input id="benchMode" type="checkbox"> 드라이런 — 센서 없이, 모터를 돌리지 않고 시험 로직·기록만 확인</span>
           <label for="rate">샘플링</label><span class="row"><select id="rate"><option value="1">200 Hz (5 ms)</option><option value="2" selected>100 Hz (10 ms)</option><option value="4">50 Hz (20 ms)</option></select></span>
         </div>
-        <div class="row"><button id="limApplyBtn">한계·샘플링 적용</button><span id="limMsg" class="note"></span></div>
+        <div class="row"><button id="limApplyBtn">한계·샘플링 다시 적용</button><span id="limMsg" class="note"></span></div>
+        <div class="note">값을 바꾸면 바로 보드에 적용됩니다. 슬라이더와 시험의 PWM 범위는 보드가 보고한 값(위 “보드:”)을 따릅니다.</div>
 
         <h2 style="margin-top:6px">수동 입력</h2>
         <div class="row"><span class="big"><b id="manVal" style="font-size:28px">0</b> PWM</span><span class="sub" id="manDuty">듀티 0.0 %</span></div>
