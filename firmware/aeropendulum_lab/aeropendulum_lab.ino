@@ -23,7 +23,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define FW_ID "AEROPEND_LAB 2.0"
+#define FW_ID "AEROPEND_LAB 2.1"   // 2.1 = 폐루프(PID/NOTCH/REF/CLSTEP/RELAY) 포함. UI 가 버전으로 구분
 #define USE_WATCHDOG 1
 
 // ---------------------------------------------------------------- hardware
@@ -241,6 +241,7 @@ struct Pid {
   int16_t ff = 150;               // 피드포워드 PWM (운전점)
   uint16_t nfc = 0;               // 노치 중심 [0.01 Hz], 0 = 끔
   uint16_t nzz = 150, nzp = 700;  // 노치 ζz, ζp ×1000
+  uint8_t umin = 0;               // 폐루프 최소 PWM (모터가 멈추지 않도록). 역추력 허용 시 무시
   float b0 = 1, b1 = 0, b2 = 0, a1 = 0, a2 = 0;
 } pid;
 float pidI = 0, omF = 0, nz1 = 0, nz2 = 0, refDeg = 0;
@@ -274,7 +275,7 @@ int16_t pidStep(float r) {
     v = y;
   }
   float u = pid.ff + v;
-  float lo = allowReverse ? -uMaxPwm : 0, hi = uMaxPwm;
+  float hi = uMaxPwm, lo = allowReverse ? -uMaxPwm : (pid.umin < hi ? pid.umin : hi);   // 하한 = 최소 PWM → 적분도 여기서 멈춤
   float us = u < lo ? lo : (u > hi ? hi : u);
   if (u == us || (u > us && e < 0) || (u < us && e > 0)) {
     pidI += pid.ki * e * ts;
@@ -507,6 +508,7 @@ int16_t profileStep() {
         if (e > h) prof.level = 1;
         else if (e < -h) prof.level = -1;
         u = (int16_t)lround(prof.kf + prof.level * prof.amp);
+        if (!allowReverse && u < pid.umin) u = pid.umin;   // 릴레이 아래쪽도 최소 PWM 이상
         phase = 2;
       }
       break;
@@ -745,7 +747,8 @@ void printPid() {
   Serial.print(F(" ff=")); Serial.print(pid.ff);
   Serial.print(F(" notch=")); Serial.print(pid.nfc);
   Serial.print(F(" zz=")); Serial.print(pid.nzz);
-  Serial.print(F(" zp=")); Serial.println(pid.nzp);
+  Serial.print(F(" zp=")); Serial.print(pid.nzp);
+  Serial.print(F(" umin=")); Serial.println(pid.umin);
 }
 
 void err(const __FlashStringHelper *code) {
@@ -884,11 +887,13 @@ void command(char *line) {
     printConfig();
     printCal();
     printPid();
-  } else if (strncmp(line, "PID ", 4) == 0) {      // PID kp_milli ki_milli kd_milli ff_pwm (실행 중 변경 가능)
-    long w[4];
-    if (parseInts(line + 4, w, 4) != 4 || w[0] < 0 || w[1] < 0 || w[2] < 0 || w[0] > 200000 || w[1] > 500000 ||
-        w[2] > 50000 || w[3] < 0 || w[3] > 255) { err(F("BAD_ARGS")); return; }
-    pid.kp = w[0] * 0.001f; pid.ki = w[1] * 0.001f; pid.kd = w[2] * 0.001f; pid.ff = w[3];
+  } else if (strncmp(line, "PID ", 4) == 0) {      // PID kp_milli ki_milli kd_milli ff_pwm [umin_pwm] (실행 중 변경 가능)
+    long w[5];
+    uint8_t k = parseInts(line + 4, w, 5);
+    if (k == 4) w[4] = pid.umin;
+    if ((k != 4 && k != 5) || w[0] < 0 || w[1] < 0 || w[2] < 0 || w[0] > 200000 || w[1] > 500000 ||
+        w[2] > 50000 || w[3] < 0 || w[3] > 255 || w[4] < 0 || w[4] > 255) { err(F("BAD_ARGS")); return; }
+    pid.kp = w[0] * 0.001f; pid.ki = w[1] * 0.001f; pid.kd = w[2] * 0.001f; pid.ff = w[3]; pid.umin = w[4];
     printPid();
   } else if (strncmp(line, "NOTCH ", 6) == 0) {    // NOTCH f_centiHz zz_milli zp_milli  /  NOTCH 0
     long w[3];

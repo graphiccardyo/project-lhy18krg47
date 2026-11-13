@@ -13,7 +13,7 @@
 6. Z-N 설계·시험
 7. 강화학습 제어기
 
-**1–3은 완료**, **4–6은 구현과 시뮬레이터 검증만 하고 하드웨어 시험 전**, **7은 시작 전**입니다(2026-11-06). 현재 결론은 [docs/RESULTS.md](docs/RESULTS.md)에 있습니다.
+**1–3은 완료**, **4–6은 구현 완료(펌웨어 2.1 업로드, 보드 벤치 시험 67/67 통과)이고 모터를 돌리는 하드웨어 폐루프 시험은 아직**, **7은 시작 전**입니다(2026-11-13). 현재 결론은 [docs/RESULTS.md](docs/RESULTS.md)에 있습니다.
 
 ## 저장소 지도
 
@@ -24,7 +24,7 @@
 | `analysis/` | Python 분석·설계 (`aero_analyze.py`, `aero_freqresp.py`, `aero_model_fit.py`, `pid_design.py`) |
 | `matlab/` | MATLAB 분석 (`aero_load`, `aero_iddata`, `aero_sysid(_all)`, `aero_static_map`, `aero_pid_design`) |
 | `data/<날짜>_runN/` | 원본 CSV(수정 금지) + `analysis/REPORT.md` |
-| `scripts/` | `Build-Lab.ps1`(컴파일·업로드), `Test-LabFirmware.ps1`(보드 시험 60여 항목), `test_sysid.js` |
+| `scripts/` | `Build-Lab.ps1`(컴파일·업로드), `Test-LabFirmware.ps1`(보드 시험 67항목), `test_sysid.js` |
 | `docs/` | `EXPERIMENT_GUIDE`, `PROTOCOL`, `HARDWARE`, `RESULTS`, `DEVELOPMENT` |
 
 ## 반드시 지킬 것
@@ -52,7 +52,7 @@
 
 ## 환경 함정 (Windows)
 
-- `arduino-cli`가 PATH에 없을 수 있습니다. `scripts/Build-Lab.ps1 -Cli <경로>`나 Arduino IDE를 쓰세요. 보드는 보통 **COM4**이고, Uno R3 코어는 `arduino:avr`입니다.
+- `arduino-cli`가 PATH에 없을 수 있습니다. Arduino IDE 2에 들어 있는 것(`%LOCALAPPDATA%\Programs\Arduino IDE\resources\app\lib\backend\resources\arduino-cli.exe`)을 `scripts/Build-Lab.ps1`이 자동으로 찾습니다. 다른 위치면 `-Cli <경로>`를 주세요. 보드는 보통 **COM4**이고, Uno R3 코어는 `arduino:avr`입니다.
 - COM 포트는 한 프로그램만 엽니다. UI가 연결되어 있으면 업로드와 시험이 "access denied"로 실패하니 사용자에게 닫아 달라고 하세요. 포트가 아예 안 보이면 USB가 빠진 것입니다.
 - Windows PowerShell 5.1은 BOM 없는 UTF-8을 ANSI로 읽습니다. 한글이 있는 `.ps1`은 **UTF-8 BOM**으로 저장하세요. PowerShell 문자열 안의 `$var한글`은 변수 이름으로 붙어 버리므로 `${var}`로 씁니다.
 - 일부 에이전트 브라우저 미리보기는 `file://`을 정적 스냅샷으로 열어 스크립트가 안 돌고, Web Serial 포트 선택창도 못 엽니다. UI 확인은 로컬 HTTP 서버 + 시뮬레이터로 하고, 실제 보드 연결은 사람이 Edge/Chrome에서 합니다. 파일을 고친 뒤에는 브라우저 캐시 때문에 `fetch(f, {cache:'reload'})` 후 새로 고쳐야 반영될 수 있습니다.

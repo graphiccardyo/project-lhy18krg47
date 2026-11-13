@@ -26,7 +26,7 @@
 
 | 명령 | 응답 | 설명 |
 |---|---|---|
-| `HELLO` | `READY AEROPEND_LAB 2.0`, `IMU …`, `CFG …`, `CALVAL …` | 출력 정지 후 상태 보고 |
+| `HELLO` | `READY AEROPEND_LAB 2.1`, `IMU …`, `CFG …`, `CALVAL …` | 출력 정지 후 상태 보고. 2.1 = 폐루프 명령 포함 (2.0 은 개루프만) |
 | `PING` | (없음) | 하트비트 |
 | `GET` | `CFG …`, `CALVAL …`, `PIDCFG …` | 현재 설정 |
 | `STOP` | `EVT STOP` | 출력·시험·보정·폐루프 모두 정지 |
@@ -70,7 +70,7 @@
 
 | 명령 | 설명 |
 |---|---|
-| `PID <kp×1000> <ki×1000> <kd×1000> <ff>` | 이득 (Kp ≤ 200, Ki ≤ 500, Kd ≤ 50, ff 0–255). 실행 중에도 변경 가능. **저장 안 함**(재부팅하면 0) → `PIDCFG …` |
+| `PID <kp×1000> <ki×1000> <kd×1000> <ff> [umin]` | 이득 (Kp ≤ 200, Ki ≤ 500, Kd ≤ 50, ff 0–255), 폐루프 최소 PWM umin 0–255 (생략하면 이전 값 유지, 기본 0). 실행 중에도 변경 가능. **저장 안 함**(재부팅하면 0) → `PIDCFG …` |
 | `NOTCH <f×100> <ζz×1000> <ζp×1000>` / `NOTCH 0` | 출력 노치 (0.1–20 Hz) / 끔. 예: `NOTCH 347 150 700` |
 | `REF <cdeg>` | 폐루프로 기준 유지 (\|r\| ≤ 170°). 다시 보내면 기준만 바뀜 → `EVT REF <cdeg>`. `STOP`·`U`로 해제 |
 | `RUN CLSTEP r0 r1 pre_ms step_ms post_ms` | 폐루프 스텝 (r: cdeg). phase 1 = r0, 2 = r1, 3 = r0 |
@@ -82,7 +82,7 @@ e = r − θ
 ω_f ← ω_f + Ts/(τ + Ts)·(ω − ω_f),  τ = 1/(2π·10 Hz)
 v = Kp·e + I − Kd·ω_f
 v = Notch(v)                    (켜져 있으면; 쌍선형 변환 + 중심주파수 프리워핑)
-u = clamp(ff + v, [0 또는 −PWMmax, PWMmax])
+u = clamp(ff + v, [umin (역추력 허용 시 −PWMmax), PWMmax])   ← umin: 모터가 멈추지 않는 최소 PWM
 I ← I + Ki·e·Ts  (u 가 포화되지 않았거나, 포화 반대 방향으로 오차가 있을 때만), |I| ≤ 255
 ```
 
@@ -95,7 +95,7 @@ I ← I + Ki·e·Ts  (u 가 포화되지 않았거나, 포화 반대 방향으�
 | `S` | `S,state,imu,cal,zero,maxTick_us,overruns,i2cErr,gate_pct,sat` | 1 s |
 | `CFG` | `CFG axis=Z sign=- beta=20 dlpf=4 div=2 ts_ms=10 umax=255 alim=12000 rev=0 bench=0 arng=16 grng=2000 cal=1 zero=1` | 설정 변경 시 |
 | `CALVAL` | `CALVAL <cal> <gbx gby gbz [°/s]> <aox aoy aoz [g]> g0 <x y z>` | 보정 변경 시 |
-| `PIDCFG` | `PIDCFG kp=7.850 ki=23.900 kd=0.000 ff=150 notch=347 zz=150 zp=700` | 이득 변경 시 |
+| `PIDCFG` | `PIDCFG kp=7.850 ki=23.900 kd=0.000 ff=150 notch=347 zz=150 zp=700 umin=60` | 이득 변경 시 |
 | `CAL` | `CAL START mode=STILL n=1000`, `CAL PROG <pct>`, `CAL OK mode=… gstd=… astd=… anorm=…`, `CAL FAIL <code> …` | 보정 중 |
 | `EVT` | `RUN <type> total= ts_ms=`, `DONE`, `STOP`, `REF <cdeg>`, `ABORT <ANGLE_LIMIT\|LINK_TIMEOUT\|IMU_FAIL\|INVALID_LINE>` | |
 | `IMU` | `IMU READY addr=0x68 i2c=400` / `IMU ERROR NOT_FOUND no_ack(…)` / `IMU ERROR READ` | 상태 변화 시 (같은 오류는 한 번만) |
@@ -119,7 +119,7 @@ I ← I + Ki·e·Ts  (u 가 포화되지 않았거나, 포화 반대 방향으�
 
 ```
 # aeropendulum_lab; name=CHIRP_143817; type=CHIRP; params=u0=150 amp=25 f0=0.1 f1=7 pre_s=12 dur_s=60 log=1; Ts=0.01; input=pwm(0-255); axis=Z-; beta=0.02; dlpf=4; cal=1; zero=1; sim=0; bench=0; status=done; fw=AEROPEND_LAB 2.0; start=…
-[# pid; kp=7.85; ki=23.9; kd=0; ff=150; notch_cHz=347; zz=150; zp=700]      ← 폐루프 기록만
+[# pid; kp=7.85; ki=23.9; kd=0; ff=150; umin=60; notch_cHz=347; zz=150; zp=700]      ← 폐루프 기록만
 t_s,pwm,duty_pct,theta_deg,omega_dps,theta_acc_deg,phase[,ref_deg]
 0.000,150,58.82,0.83,1.20,3.10,1
 ```

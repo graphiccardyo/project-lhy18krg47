@@ -166,6 +166,9 @@ function onLine(line) {
   if (c < 32) return;
   if (line.startsWith('READY ')) {
     S.fw = line.slice(6); $('fwId').textContent = S.fw;
+    const ver = parseFloat((S.fw.match(/AEROPEND_LAB (\d+\.\d+)/) || [])[1]);
+    S.fwHasPid = ver >= 2.1;
+    if (!S.fwHasPid) banner(`보드 펌웨어(${S.fw})가 폐루프 기능 이전 버전입니다. ⑥ 폐루프·PID(이득 적용·기준 유지·폐루프 스텝·릴레이)를 쓰려면 firmware/aeropendulum_lab 을 다시 업로드하세요. 개루프 시험(①–⑤)은 그대로 쓸 수 있습니다.`);
     dot('dotLink', 'good'); $('txtLink').textContent = S.isSim ? '시뮬레이터' : '연결됨';
     log(line, 'ok');
     if (!S.helloSent) hello();
@@ -190,7 +193,9 @@ function onLine(line) {
   if (line.startsWith('ERR ')) {
     const code = line.slice(4);
     log(line, 'e');
-    const msg = ERRORS[code] || code;
+    let msg = ERRORS[code] || code;
+    if ((code === 'UNKNOWN_COMMAND' || code === 'UNKNOWN_PROFILE') && !S.fwHasPid)
+      msg += ` — 보드 펌웨어(${S.fw || '?'})에 이 기능이 없습니다. 최신 펌웨어(2.1 이상)를 업로드하세요.`;
     banner('보드 오류: ' + msg);
     if (S.pendingRun) S.pendingRun = null;
     return;
@@ -337,6 +342,7 @@ function onEvent(ev) {
     startRecording(type, pr.params, { total: +kv.total, ts: (+kv.ts_ms || 10) / 1000, extra: pr.extra });
     log(`시험 시작: ${type} (${(+kv.total * (+kv.ts_ms) / 1000).toFixed(1)} s)`, 'ok');
   } else if (kind === 'DONE') {
+    S.devState = 0;
     log('시험 완료', 'ok');
     if (S.rec && S.rec.type !== 'MANUAL') finishRecording('done');
   } else if (kind === 'ABORT') {
@@ -347,8 +353,10 @@ function onEvent(ev) {
     if (S.rec && S.rec.type !== 'MANUAL') finishRecording('aborted: ' + why);
     resetManualUi();
   } else if (kind === 'STOP') {
+    S.devState = 0;
     log('정지', 'ok');
     if (S.rec && S.rec.type !== 'MANUAL') finishRecording('stopped');
+    updateButtons();
   } else log('EVT ' + ev);
 }
 
@@ -392,7 +400,7 @@ function recToCsv(r) {
   const head = `# aeropendulum_lab; name=${r.name}; type=${r.type}; params=${params}; Ts=${r.ts}; input=pwm(0-255); ` +
     `axis=${m.axis}; beta=${m.beta}; dlpf=${m.dlpf}; cal=${m.cal}; zero=${m.zero}; sim=${m.sim}; bench=${m.bench || 0}; status=${r.status}; fw=${m.fw}; start=${r.start.toISOString()}`;
   const hasRef = r.ref && r.ref.some(Number.isFinite);
-  const pidTxt = r.pid ? `# pid; kp=${r.pid.kp}; ki=${r.pid.ki}; kd=${r.pid.kd}; ff=${r.pid.ff}; notch_cHz=${r.pid.notch}; zz=${r.pid.zz}; zp=${r.pid.zp}` : null;
+  const pidTxt = r.pid ? `# pid; kp=${r.pid.kp}; ki=${r.pid.ki}; kd=${r.pid.kd}; ff=${r.pid.ff}; umin=${r.pid.umin ?? 0}; notch_cHz=${r.pid.notch}; zz=${r.pid.zz}; zp=${r.pid.zp}` : null;
   const rows = [head, 't_s,pwm,duty_pct,theta_deg,omega_dps,theta_acc_deg,phase' + (hasRef ? ',ref_deg' : '')];
   if (pidTxt && hasRef) rows.splice(1, 0, pidTxt);
   const t0 = r.tms[0];
@@ -837,7 +845,7 @@ const PRESETS = {
 
 function pidFromForm() {
   const notch = $('notchOn').checked ? { f: +$('nf').value, zz: +$('nzz').value, zp: +$('nzp').value } : null;
-  return { kp: +$('kp').value, ki: +$('ki').value, kd: +$('kd').value, ff: Math.round(+$('ff').value), notch };
+  return { kp: +$('kp').value, ki: +$('ki').value, kd: +$('kd').value, ff: Math.round(+$('ff').value), umin: Math.round(+$('umin').value || 0), notch };
 }
 
 function loadPreset(k) {
@@ -851,8 +859,15 @@ function loadPreset(k) {
 
 function applyPid() {
   const g = pidFromForm();
-  if (![g.kp, g.ki, g.kd].every((v) => Number.isFinite(v) && v >= 0) || !(g.ff >= 0 && g.ff <= 255)) return banner('이득은 0 이상, ff 는 0–255 입니다.');
-  send(`PID ${Math.round(g.kp * 1000)} ${Math.round(g.ki * 1000)} ${Math.round(g.kd * 1000)} ${g.ff}`);
+  if (![g.kp, g.ki, g.kd].every((v) => Number.isFinite(v) && v >= 0) || !(g.ff >= 0 && g.ff <= 255)) return banner('이득은 0 이상의 숫자, ff 는 0–255 입니다.');
+  if (g.kp > 200 || g.ki > 500 || g.kd > 50) return banner('이득 범위: Kp ≤ 200, Ki ≤ 500, Kd ≤ 50 (펌웨어 제한).');
+  if (g.notch && g.notch.f > 0 && !(g.notch.f >= 0.1 && g.notch.f <= 20 && g.notch.zz >= 0 && g.notch.zz <= 2 && g.notch.zp > 0 && g.notch.zp <= 2))
+    return banner('노치 범위: f 0.1–20 Hz, ζz 0–2, ζp 0–2 (ζp > 0).');
+  if (S.connected && !S.isSim && S.fwHasPid === false) banner(`보드 펌웨어(${S.fw})에는 PID 명령이 없습니다. 펌웨어를 다시 업로드하세요.`);
+  if (!(g.umin >= 0 && g.umin <= 255)) return banner('최소 PWM 은 0–255 입니다.');
+  if (S.cfg.umax != null && g.umin >= S.cfg.umax) return banner(`최소 PWM(${g.umin})이 최대 PWM(${S.cfg.umax}) 이상입니다.`);
+  if (g.umin > g.ff) banner(`참고: 최소 PWM(${g.umin})이 ff(${g.ff})보다 큽니다. 기준 근처에서도 출력이 ${g.umin} 아래로 내려가지 않습니다.`);
+  send(`PID ${Math.round(g.kp * 1000)} ${Math.round(g.ki * 1000)} ${Math.round(g.kd * 1000)} ${g.ff} ${g.umin}`);
   if (g.notch && g.notch.f > 0) send(`NOTCH ${Math.round(g.notch.f * 100)} ${Math.round(g.notch.zz * 1000)} ${Math.round(g.notch.zp * 1000)}`);
   else send('NOTCH 0');
 }
@@ -861,7 +876,7 @@ function onPidCfg(line) {
   const c = {};
   for (const kv of line.slice(7).split(' ')) { const [k, v] = kv.split('='); c[k] = +v; }
   S.pidCfg = c;
-  $('pidMsg').textContent = `보드: Kp ${c.kp} · Ki ${c.ki} · Kd ${c.kd} · ff ${c.ff} · 노치 ${c.notch ? (c.notch / 100).toFixed(2) + ' Hz (ζz ' + c.zz / 1000 + ', ζp ' + c.zp / 1000 + ')' : '끔'}`;
+  $('pidMsg').textContent = `보드: Kp ${c.kp} · Ki ${c.ki} · Kd ${c.kd} · ff ${c.ff} · 최소 PWM ${c.umin ?? 0} · 노치 ${c.notch ? (c.notch / 100).toFixed(2) + ' Hz (ζz ' + c.zz / 1000 + ', ζp ' + c.zp / 1000 + ')' : '끔'}`;
 }
 
 function updatePidPred() {
@@ -872,7 +887,7 @@ function updatePidPred() {
   const ref = []; for (let k = 0; k < 800; k++) ref.push(k < 100 ? 20 : 25);
   const lines = [];
   for (const K of [0.12, 0.15, 0.21]) {
-    const r = SysId.simulateClosedLoop({ K }, g, ref);
+    const r = SysId.simulateClosedLoop({ K }, g, ref, 0.01, { umin: g.umin, umax: S.cfg.umax ?? 255 });
     const rec = { th: Array.from(r.th), u: Array.from(r.u), ref, ph: ref.map((v, k) => (k < 100 ? 1 : 2)), ts: 0.01 };
     const m = SysId.clStepMetrics(rec);
     const blow = !m || !Number.isFinite(m.os) || Math.max(...rec.th.map(Math.abs)) > 200;
@@ -896,7 +911,7 @@ function showClResult(r) {
   const m = SysId.clStepMetrics(r);
   const el = $('clResult');
   if (!m) { el.textContent = '지표를 계산할 수 없습니다 (스텝 구간이 짧거나 기준 정보 없음).'; el.hidden = false; return; }
-  const g = r.pid ? { kp: r.pid.kp, ki: r.pid.ki, kd: r.pid.kd, ff: r.pid.ff, notch: r.pid.notch ? { f: r.pid.notch / 100, zz: r.pid.zz / 1000, zp: r.pid.zp / 1000 } : null } : pidFromForm();
+  const g = r.pid ? { kp: r.pid.kp, ki: r.pid.ki, kd: r.pid.kd, ff: r.pid.ff, umin: r.pid.umin || 0, notch: r.pid.notch ? { f: r.pid.notch / 100, zz: r.pid.zz / 1000, zp: r.pid.zp / 1000 } : null } : pidFromForm();
   el.textContent =
     `기준 ${m.r0}° → ${m.r1}°  (Kp ${g.kp}, Ki ${g.ki}, Kd ${g.kd}, ff ${g.ff}${g.notch ? ', 노치 ' + g.notch.f + ' Hz' : ''})\n` +
     `상승시간(10–90%) ${Number.isFinite(m.tr) ? m.tr.toFixed(2) + ' s' : '—'}   오버슈트 ${m.os.toFixed(1)}%   첨두 ${m.tp.toFixed(2)} s   정착(±5%) ${Number.isFinite(m.ts5) ? m.ts5.toFixed(2) + ' s' : '구간 내 미정착'}\n` +
@@ -908,7 +923,7 @@ function showClResult(r) {
   const t = ref.map((_, k) => k * r.ts);
   const series = [{ y: r.th.slice(s0), color: '--s1', width: 1.2, label: '측정 θ' }, { y: ref, color: '--s4', dash: [5, 3], step: true, label: '기준' }];
   for (const [K, col] of [[0.12, '--s3'], [0.21, '--s2']]) {
-    const sim = SysId.simulateClosedLoop({ K }, g, ref, r.ts);
+    const sim = SysId.simulateClosedLoop({ K }, g, ref, r.ts, { umin: g.umin || 0, umax: S.cfg.umax ?? 255 });
     series.push({ y: Array.from(sim.th), color: col, width: 1, dash: [2, 2], label: `모델 K=${K}` });
   }
   $('cCl').hidden = false;
@@ -982,7 +997,7 @@ function updateButtons() {
   set('clRunBtn', c && !busy); set('rlRunBtn', c && !busy);
 }
 
-const PERSIST = ['kp', 'ki', 'kd', 'ff', 'notchOn', 'nf', 'nzz', 'nzp', 'refVal', 'clR0', 'clR1', 'clPre', 'clHold', 'clPost',
+const PERSIST = ['kp', 'ki', 'kd', 'ff', 'umin', 'notchOn', 'nf', 'nzz', 'nzp', 'refVal', 'clR0', 'clR1', 'clPre', 'clHold', 'clPost',
   'rlR', 'rlD', 'rlH', 'rlPre', 'rlDur', 'calZero', 'uMax', 'aLim', 'allowRev', 'rate', 'stStart', 'stEnd', 'stInc', 'stDwell', 'stSettle', 'u0', 'pre',
   'stepDu', 'stepHold', 'stepPost', 'chAmp', 'chF0', 'chF1', 'chDur', 'chLog', 'prAmp', 'prBit', 'prDur', 'autoSave', 'nk'];
 function saveForm() {
@@ -1074,7 +1089,7 @@ function init() {
   // ⑥
   $('pidPresetBtn').onclick = () => loadPreset($('pidPreset').value);
   $('pidApplyBtn').onclick = applyPid;
-  ['kp', 'ki', 'kd', 'ff', 'notchOn', 'nf', 'nzz', 'nzp'].forEach((id) => $(id).addEventListener('input', updatePidPred));
+  ['kp', 'ki', 'kd', 'ff', 'umin', 'notchOn', 'nf', 'nzz', 'nzp'].forEach((id) => $(id).addEventListener('input', updatePidPred));
   $('notchOn').addEventListener('change', updatePidPred);
   $('refBtn').onclick = () => { const r = +$('refVal').value; if (Number.isFinite(r)) send(`REF ${Math.round(r * 100)}`); };
   $('clRunBtn').onclick = runClStep;

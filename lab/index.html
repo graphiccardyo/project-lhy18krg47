@@ -279,6 +279,7 @@ details summary { cursor: pointer; color: var(--ink-2); font-size: 13px; }
           <label>Ki</label><span class="row"><input id="ki" type="number" min="0" step="0.5" value="23.9"> PWM/(°·s) <span class="note" id="tiTxt"></span></span>
           <label>Kd</label><span class="row"><input id="kd" type="number" min="0" step="0.01" value="0"> PWM/(°/s) <span class="note" id="tdTxt"></span></span>
           <label>피드포워드 ff</label><span class="row"><input id="ff" type="number" min="0" max="255" step="1" value="150"> PWM <span class="note">기준 근처 평형 PWM (정적 특성에서)</span></span>
+          <label>최소 PWM</label><span class="row"><input id="umin" type="number" min="0" max="255" step="1" value="0"> PWM <span class="note">폐루프 출력 하한. 이 아래로 내려가면 모터가 멈췄다 다시 돌 때 지연이 크므로, 모터가 확실히 도는 PWM으로 (0 = 끔)</span></span>
           <label>노치</label><span class="row"><label class="check"><input id="notchOn" type="checkbox" checked> 사용</label> f <input id="nf" type="number" min="0.1" max="20" step="0.01" value="3.47" style="width:70px"> Hz ζz <input id="nzz" type="number" min="0" max="2" step="0.01" value="0.15" style="width:62px"> ζp <input id="nzp" type="number" min="0.01" max="2" step="0.05" value="0.7" style="width:62px"></span>
         </div>
         <div class="row"><button id="pidApplyBtn" class="primary">이득 적용</button><span class="sub" id="pidMsg"></span></div>

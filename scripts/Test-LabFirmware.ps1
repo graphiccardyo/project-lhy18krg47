@@ -64,7 +64,7 @@ function Between($arr, [string]$startPat, [string]$endPat) {
 try {
     Open-Board
     $boot = @($script:lines.ToArray())
-    Check '부팅 배너 (리셋 후)' ([bool]($boot -match 'READY AEROPEND_LAB 2\.0')) ''
+    Check '부팅 배너 2.1 (리셋 후)' ([bool]($boot -match 'READY AEROPEND_LAB 2\.1')) ''
     $imuLine = ($boot | Where-Object { $_ -match '^IMU ' } | Select-Object -First 1)
     $imuOk = [bool]($imuLine -match 'IMU READY')
     Write-Host "IMU 상태: $imuLine" -ForegroundColor Yellow
@@ -86,7 +86,7 @@ try {
         @('RUN WAVE 1 2 3', 'ERR (UNKNOWN_PROFILE|IMU_NOT_READY)'), @('BENCH 2', 'ERR BAD_ARGS'), @(('X' * 100), 'ERR INVALID_LINE')
     )
     foreach ($c in $cases) { $r = Send $c[0] 250; $label = if ($c[0].Length -gt 20) { 'X*100 (너무 긴 줄)' } else { $c[0] }; Check "오류: $label" ((Text $r) -match $c[1]) (Text $r) }
-    $script:lines.Clear(); $script:p.Write('GE'); Pump 500
+    $script:lines.Clear(); $script:p.Write('GE'); Pump 500 -NoPing      # PING 이 'GE' 뒤에 붙으면 'GEPING' 이 되므로 보내지 않음
     Check '잘린 명령 250ms 후 폐기' ((Text $script:lines) -match 'ERR COMMAND_TIMEOUT') (Text $script:lines)
 
     if (-not $imuOk) {
@@ -200,17 +200,20 @@ try {
 
     # ---- 폐루프 (벤치: 모터 핀 LOW. IMU 가 있으면 실제 θ, 없으면 θ=0 → 기대 출력은 각 샘플의 θ 로 계산)
     function DRef($arr) { @($arr | Where-Object { $_ -match '^D,\d' } | ForEach-Object { $f = $_.Split(','); [pscustomobject]@{ u = [int]$f[2]; th = [int]$f[3] / 100.0; ph = [int]$f[6]; ref = $(if ($f.Count -ge 8) { [int]$f[7] } else { $null }) } }) }
-    # P 제어 기대값: u = ff + Kp(ref − θ). θ 는 같은 줄의 값(제어에 쓰인 값과 같은 샘플)
-    function PErr($d, $kp, $ff) { ($d | ForEach-Object { [math]::Abs($_.u - [math]::Round($ff + $kp * ($_.ref / 100.0 - $_.th))) } | Measure-Object -Maximum).Maximum }
+    # P 제어 기대값: u = clamp(ff + Kp(ref − θ), 0, 최대 PWM). θ 는 같은 줄의 값(제어에 쓰인 값과 같은 샘플)
+    function PErr($d, $kp, $ff, $umax = 255) { ($d | ForEach-Object { [math]::Abs($_.u - [math]::Min($umax, [math]::Max(0, [math]::Round($ff + $kp * ($_.ref / 100.0 - $_.th))))) } | Measure-Object -Maximum).Maximum }
+    # 앞의 FACTORY 시험으로 축·영점이 초기화되어 θ 가 크게(예: −90°) 나오므로, 사용자 설정(축·영점)을 먼저 되돌림 → 매달린 진자 θ ≈ 0
+    if ($script:backedUp) { Send 'CFG RESTORE' 500 | Out-Null }
     $r = Send 'PID 2000 0 0 150' 250
     Check 'PID 설정 → PIDCFG' ((Text $r) -match 'PIDCFG kp=2\.000 ki=0\.000 kd=0\.000 ff=150 notch=0') (Text $r)
     $r = Send 'PID -1 0 0 150' 250;   Check 'PID 음수 이득 거부' ((Text $r) -match 'ERR BAD_ARGS') (Text $r)
     $r = Send 'NOTCH 5 150 700' 250;  Check 'NOTCH 범위 밖 거부' ((Text $r) -match 'ERR BAD_ARGS') (Text $r)
     $r = Send 'REF 500' 600
     $d = DRef $r
-    Check 'REF 5° → EVT REF, D 줄에 기준(8번째 칸)' ((Text $r) -match 'EVT REF 500' -and $d.Count -gt 10 -and @($d | Where-Object { $_.ref -eq 500 }).Count -ge $d.Count - 2) "D $($d.Count)줄"
+    $withRef = @($d | Where-Object { $_.ref -eq 500 }).Count
+    Check 'REF 5° → EVT REF, D 줄에 기준(8번째 칸)' ((Text $r) -match 'EVT REF 500' -and $withRef -ge 40 -and ($d | Select-Object -Last 1).ref -eq 500) "D $($d.Count)줄 중 기준 포함 $withRef"
     $e1 = PErr ($d | Select-Object -Last 20) 2 150
-    Check 'P 제어 출력 = ff + Kp·(ref−θ) (±1)' ($e1 -le 1) "최대 오차 $e1, 마지막 u=$(($d | Select-Object -Last 1).u), θ=$(($d | Select-Object -Last 1).th)"
+    Check 'P 제어 출력 = clamp(ff + Kp·(ref−θ)) (±1)' ($e1 -le 1) "최대 오차 $e1, 마지막 u=$(($d | Select-Object -Last 1).u), θ=$(($d | Select-Object -Last 1).th)"
     $script:lines.Clear(); Pump 1200
     $st = ($script:lines | Where-Object { $_ -match '^S,' } | Select-Object -Last 1)
     Check '폐루프 유지 중 상태 4' ($st -match '^S,4,') $st
@@ -221,11 +224,12 @@ try {
     Send 'NOTCH 0' 200 | Out-Null
     $r = Send 'PID 0 10000 0 150' 1000
     $d = DRef $r
-    $first = $d | Select-Object -First 1; $last = $d | Select-Object -Last 1
-    $rate = ($last.u - $first.u) / (($d.Count - 1) * 0.01); $expRate = 10 * (5 - $last.th)
+    $lin = @($d | Where-Object { $_.u -lt 254 -and $_.u -gt 1 })      # 포화되지 않은 구간만
+    $first = $lin | Select-Object -First 1; $last = $lin | Select-Object -Last 1
+    $rate = if ($lin.Count -gt 10) { ($last.u - $first.u) / (($lin.Count - 1) * 0.01) } else { [double]::NaN }; $expRate = 10 * (5 - $last.th)
     Check '적분 동작: Ki=10 → 출력 증가율 ≈ 10·(ref−θ) PWM/s' ([math]::Abs($rate - $expRate) -le 0.15 * [math]::Abs($expRate) + 3) ("증가율 {0:N1} PWM/s (기대 {1:N1})" -f $rate, $expRate)
     $r = Send 'LIM 200 12000 0' 2500
-    $d = DRef $r
+    $d = DRef (Between $r '^CFG ' 'NEVER')                              # LIM 이 적용된 뒤(CFG 응답 이후)만
     Check '출력 포화 = 최대 PWM(200), 적분 정지' (@($d | Where-Object { $_.u -gt 200 }).Count -eq 0 -and ($d | Select-Object -Last 1).u -eq 200) "최대 u=$(($d | Measure-Object -Property u -Maximum).Maximum)"
     $r = Send 'REF 0' 300
     $d = DRef $r
@@ -246,15 +250,33 @@ try {
     $seg = DRef (Between $r '^EVT RUN RELAY' '^EVT DONE')
     $pre = @($seg | Where-Object { $_.ph -eq 1 }); $rel = @($seg | Where-Object { $_.ph -eq 2 })
     $center = ($pre | Select-Object -Last 10 | Measure-Object -Property u -Average).Average
-    $okRel = @($rel | Where-Object { [math]::Abs($_.u - ($center + 15)) -le 1.5 }).Count
+    $expRel = [math]::Min(255, $center + 15)
+    $okRel = @($rel | Where-Object { [math]::Abs($_.u - $expRel) -le 1.5 }).Count
     Check 'RELAY: 유지 구간 후반 평균 + d(15) (θ < 기준이므로 +쪽 유지)' ($pre.Count -eq 20 -and $rel.Count -eq 50 -and $okRel -eq 50) ("중심 {0:N1}, 릴레이 u={1}" -f $center, (($rel | Select-Object -First 3 | ForEach-Object { $_.u }) -join ','))
-    $r = Send 'RUN CLSTEP 1000 1000 0 100 0' 300
+    $r = Send 'RUN CLSTEP 1000 1000 0 3000 0' 300                      # 3 s 시험 진행 중에
     $r2 = Send 'REF 500' 200
     Check '시험 중 REF → BUSY' ((Text $r2) -match 'ERR BUSY') (Text $r2)
     Send 'STOP' 300 | Out-Null
     $script:p.WriteLine('REF 500'); $script:lines.Clear(); Pump 1700 -NoPing
     Check '폐루프 유지 중 통신 두절 → 정지' ((Text $script:lines) -match 'EVT ABORT LINK_TIMEOUT') (Text $script:lines)
-    Send 'PID 0 0 0 150' 200 | Out-Null
+
+    # ---- 폐루프 최소 PWM (모터가 멈추지 않도록 하한)
+    $r = Send 'PID 5000 0 0 150 80' 250
+    Check 'PID 최소 PWM 설정 → PIDCFG umin=80' ((Text $r) -match 'PIDCFG kp=5\.000 .* umin=80') (Text $r)
+    $r = Send 'PID 5000 0 0 150 300' 250; Check '최소 PWM 범위 밖 거부' ((Text $r) -match 'ERR BAD_ARGS') (Text $r)
+    $r = Send 'REF -3000' 600
+    $d = @(DRef $r | Where-Object { $_.ref -eq -3000 })
+    Check '기준이 낮아 출력이 음수여야 할 때 → 최소 PWM(80)에서 멈춤' ($d.Count -gt 20 -and @($d | Where-Object { $_.u -lt 80 }).Count -eq 0 -and ($d | Select-Object -Last 1).u -eq 80) "u 최소 $(($d | Measure-Object -Property u -Minimum).Minimum), 마지막 $(($d | Select-Object -Last 1).u)"
+    Send 'STOP' 200 | Out-Null
+    Send 'PID 0 20000 0 150 80' 200 | Out-Null
+    Send 'REF -3000' 1500 | Out-Null                                     # 적분만: 하한에 붙은 뒤 1.2 s 이상 유지
+    $r = Send 'REF 500' 300
+    $d = @(DRef $r | Where-Object { $_.ref -eq 500 })
+    Check '하한에서 적분 정지 → 기준이 다시 오르면 0.3 s 안에 바로 회복' ($d.Count -gt 5 -and ($d | Select-Object -Last 1).u -ge 84) "0.3 s 뒤 u=$(($d | Select-Object -Last 1).u) (와인드업이면 80 에 계속 붙어 있음)"
+    $r = Send 'PID 2000 0 0 150' 250
+    Check '인자 4개 PID 는 최소 PWM 유지 (umin=80)' ((Text $r) -match 'umin=80') (Text $r)
+    Send 'STOP' 200 | Out-Null
+    Send 'PID 0 0 0 150 0' 200 | Out-Null
 
     # ---- 타이밍
     $script:lines.Clear(); Pump 1200
