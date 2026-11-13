@@ -13,7 +13,15 @@ if (-not $Cli) {
     $cmd = Get-Command arduino-cli -ErrorAction SilentlyContinue
     if ($cmd) { $Cli = $cmd.Source }
     elseif (Test-Path "$root\.tools\arduino-cli.exe") { $Cli = "$root\.tools\arduino-cli.exe" }
-    else { throw 'arduino-cli를 찾을 수 없습니다. -Cli 로 경로를 주거나 Arduino IDE에서 firmware/aeropendulum_lab/aeropendulum_lab.ino 를 여세요.' }
+    else {
+        # Arduino IDE 2 에 들어 있는 arduino-cli (사용자 설치 / 전체 설치)
+        $bundled = @("$env:LOCALAPPDATA\Programs\Arduino IDE\resources\app\lib\backend\resources\arduino-cli.exe",
+                     "$env:ProgramFiles\Arduino IDE\resources\app\lib\backend\resources\arduino-cli.exe") |
+                   Where-Object { Test-Path $_ } | Select-Object -First 1
+        if ($bundled) { $Cli = $bundled }
+    }
+    if (-not $Cli) { throw 'arduino-cli를 찾을 수 없습니다. -Cli 로 경로를 주거나 Arduino IDE에서 firmware/aeropendulum_lab/aeropendulum_lab.ino 를 여세요.' }
+    Write-Host "arduino-cli: $Cli"
 }
 $sketch = Join-Path $root 'firmware\aeropendulum_lab'
 $out = Join-Path $root 'build\aeropendulum_lab'

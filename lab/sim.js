@@ -36,7 +36,7 @@
       this.auxCnt = 0; this.statusT = 0; this.seed = 12345;
       this.closed = false;
       setTimeout(() => {
-        this.emit('READY AEROPEND_LAB 2.0 (SIM)');
+        this.emit('READY AEROPEND_LAB 2.1 (SIM)');
         this.emit('IMU READY addr=0x68');
         this.printCfg(); this.printCal(); this.printPid();
       }, 150);
@@ -98,7 +98,7 @@
       const bad = () => this.emit('ERR BAD_ARGS');
       switch (cmd) {
         case 'PING': return;
-        case 'HELLO': this.stopAll(); this.emit('READY AEROPEND_LAB 2.0 (SIM)'); this.emit('IMU READY'); this.printCfg(); this.printCal(); return;
+        case 'HELLO': this.stopAll(); this.emit('READY AEROPEND_LAB 2.1 (SIM)'); this.emit('IMU READY'); this.printCfg(); this.printCal(); return;
         case 'GET': this.printCfg(); this.printCal(); this.printPid(); return;
         case 'STOP':
           if (this.cal) { this.cal = null; this.emit('CAL FAIL CANCELLED'); }
@@ -108,12 +108,13 @@
           if (tok.length !== 2 || !(Math.abs(ints[0]) <= 255)) return bad();
           this.clHold = false; this.uMan = ints[0]; return;
         case 'PID':
-          if (tok.length !== 5 || ints.some((x) => !(x >= 0)) || ints[3] > 255) return bad();
+          // 펌웨어와 같은 범위: Kp ≤ 200, Ki ≤ 500, Kd ≤ 50 (×1000), ff 0–255
+          if (tok.length !== 5 || ints.some((x) => !Number.isInteger(x) || x < 0) || ints[0] > 200000 || ints[1] > 500000 || ints[2] > 50000 || ints[3] > 255) return bad();
           Object.assign(this.pid, { kp: ints[0] / 1000, ki: ints[1] / 1000, kd: ints[2] / 1000, ff: ints[3] });
           return this.printPid();
         case 'NOTCH':
           if (tok.length === 2 && ints[0] === 0) this.pid.nfc = 0;
-          else if (tok.length === 4 && ints[0] >= 10 && ints[0] <= 2000 && ints[2] > 0) Object.assign(this.pid, { nfc: ints[0], nzz: ints[1], nzp: ints[2] });
+          else if (tok.length === 4 && ints[0] >= 10 && ints[0] <= 2000 && ints[1] >= 0 && ints[1] <= 2000 && ints[2] > 0 && ints[2] <= 2000) Object.assign(this.pid, { nfc: ints[0], nzz: ints[1], nzp: ints[2] });
           else return bad();
           this.nz1 = this.nz2 = 0; this.notchCoeffs(); return this.printPid();
         case 'REF':

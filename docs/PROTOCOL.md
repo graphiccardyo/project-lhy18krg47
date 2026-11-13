@@ -26,7 +26,7 @@
 
 | 명령 | 응답 | 설명 |
 |---|---|---|
-| `HELLO` | `READY AEROPEND_LAB 2.0`, `IMU …`, `CFG …`, `CALVAL …` | 출력 정지 후 상태 보고 |
+| `HELLO` | `READY AEROPEND_LAB 2.1`, `IMU …`, `CFG …`, `CALVAL …` | 출력 정지 후 상태 보고. 2.1 = 폐루프 명령 포함 (2.0 은 개루프만) |
 | `PING` | (없음) | 하트비트 |
 | `GET` | `CFG …`, `CALVAL …`, `PIDCFG …` | 현재 설정 |
 | `STOP` | `EVT STOP` | 출력·시험·보정·폐루프 모두 정지 |

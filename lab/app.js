@@ -166,6 +166,9 @@ function onLine(line) {
   if (c < 32) return;
   if (line.startsWith('READY ')) {
     S.fw = line.slice(6); $('fwId').textContent = S.fw;
+    const ver = parseFloat((S.fw.match(/AEROPEND_LAB (\d+\.\d+)/) || [])[1]);
+    S.fwHasPid = ver >= 2.1;
+    if (!S.fwHasPid) banner(`보드 펌웨어(${S.fw})가 폐루프 기능 이전 버전입니다. ⑥ 폐루프·PID(이득 적용·기준 유지·폐루프 스텝·릴레이)를 쓰려면 firmware/aeropendulum_lab 을 다시 업로드하세요. 개루프 시험(①–⑤)은 그대로 쓸 수 있습니다.`);
     dot('dotLink', 'good'); $('txtLink').textContent = S.isSim ? '시뮬레이터' : '연결됨';
     log(line, 'ok');
     if (!S.helloSent) hello();
@@ -190,7 +193,9 @@ function onLine(line) {
   if (line.startsWith('ERR ')) {
     const code = line.slice(4);
     log(line, 'e');
-    const msg = ERRORS[code] || code;
+    let msg = ERRORS[code] || code;
+    if ((code === 'UNKNOWN_COMMAND' || code === 'UNKNOWN_PROFILE') && !S.fwHasPid)
+      msg += ` — 보드 펌웨어(${S.fw || '?'})에 이 기능이 없습니다. 최신 펌웨어(2.1 이상)를 업로드하세요.`;
     banner('보드 오류: ' + msg);
     if (S.pendingRun) S.pendingRun = null;
     return;
@@ -337,6 +342,7 @@ function onEvent(ev) {
     startRecording(type, pr.params, { total: +kv.total, ts: (+kv.ts_ms || 10) / 1000, extra: pr.extra });
     log(`시험 시작: ${type} (${(+kv.total * (+kv.ts_ms) / 1000).toFixed(1)} s)`, 'ok');
   } else if (kind === 'DONE') {
+    S.devState = 0;
     log('시험 완료', 'ok');
     if (S.rec && S.rec.type !== 'MANUAL') finishRecording('done');
   } else if (kind === 'ABORT') {
@@ -347,8 +353,10 @@ function onEvent(ev) {
     if (S.rec && S.rec.type !== 'MANUAL') finishRecording('aborted: ' + why);
     resetManualUi();
   } else if (kind === 'STOP') {
+    S.devState = 0;
     log('정지', 'ok');
     if (S.rec && S.rec.type !== 'MANUAL') finishRecording('stopped');
+    updateButtons();
   } else log('EVT ' + ev);
 }
 
@@ -851,7 +859,11 @@ function loadPreset(k) {
 
 function applyPid() {
   const g = pidFromForm();
-  if (![g.kp, g.ki, g.kd].every((v) => Number.isFinite(v) && v >= 0) || !(g.ff >= 0 && g.ff <= 255)) return banner('이득은 0 이상, ff 는 0–255 입니다.');
+  if (![g.kp, g.ki, g.kd].every((v) => Number.isFinite(v) && v >= 0) || !(g.ff >= 0 && g.ff <= 255)) return banner('이득은 0 이상의 숫자, ff 는 0–255 입니다.');
+  if (g.kp > 200 || g.ki > 500 || g.kd > 50) return banner('이득 범위: Kp ≤ 200, Ki ≤ 500, Kd ≤ 50 (펌웨어 제한).');
+  if (g.notch && g.notch.f > 0 && !(g.notch.f >= 0.1 && g.notch.f <= 20 && g.notch.zz >= 0 && g.notch.zz <= 2 && g.notch.zp > 0 && g.notch.zp <= 2))
+    return banner('노치 범위: f 0.1–20 Hz, ζz 0–2, ζp 0–2 (ζp > 0).');
+  if (S.connected && !S.isSim && S.fwHasPid === false) banner(`보드 펌웨어(${S.fw})에는 PID 명령이 없습니다. 펌웨어를 다시 업로드하세요.`);
   send(`PID ${Math.round(g.kp * 1000)} ${Math.round(g.ki * 1000)} ${Math.round(g.kd * 1000)} ${g.ff}`);
   if (g.notch && g.notch.f > 0) send(`NOTCH ${Math.round(g.notch.f * 100)} ${Math.round(g.notch.zz * 1000)} ${Math.round(g.notch.zp * 1000)}`);
   else send('NOTCH 0');

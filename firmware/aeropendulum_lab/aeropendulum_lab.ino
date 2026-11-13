@@ -23,7 +23,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define FW_ID "AEROPEND_LAB 2.0"
+#define FW_ID "AEROPEND_LAB 2.1"   // 2.1 = 폐루프(PID/NOTCH/REF/CLSTEP/RELAY) 포함. UI 가 버전으로 구분
 #define USE_WATCHDOG 1
 
 // ---------------------------------------------------------------- hardware

@@ -4,7 +4,7 @@
 
 | 도구 | 용도 | 비고 |
 |---|---|---|
-| Arduino IDE 2 또는 `arduino-cli` | 펌웨어 빌드·업로드 | 코어 `arduino:avr` 1.8.x. 외부 라이브러리 없음 (Wire, EEPROM만) |
+| Arduino IDE 2 또는 `arduino-cli` | 펌웨어 빌드·업로드 | 코어 `arduino:avr` 1.8.x. 외부 라이브러리 없음 (Wire, EEPROM만). `Build-Lab.ps1`은 IDE 안의 arduino-cli를 자동으로 찾음 |
 | Edge / Chrome | 실험 UI (Web Serial) | `file://`로 열어도 동작. Firefox·Safari는 Web Serial 미지원 |
 | Python 3.10+ | `analysis/` | `pip install -r analysis/requirements.txt` (numpy, scipy, matplotlib) |
 | Node.js | `scripts/test_sysid.js` (UI 계산 코드 시험) | |
