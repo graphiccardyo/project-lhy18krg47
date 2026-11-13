@@ -277,7 +277,7 @@ function onCfg(line) {
   if (document.activeElement !== $('beta')) $('beta').value = (cfg.beta / 1000).toString();
   if (document.activeElement !== $('dlpf')) $('dlpf').value = cfg.dlpf;
   $('stepAxis').classList.add('done');
-  $('limMsg').textContent = `보드: 최대 PWM ${cfg.umax} · 한계 ${cfg.alim / 100}° · 역추력 ${cfg.rev ? '허용' : '금지'} · Ts ${cfg.ts_ms} ms`;
+  updateLimMsg();
   dot('dotCal', cfg.cal ? 'good' : 'warn'); $('txtCal').textContent = cfg.cal ? '보정됨' : '미보정';
   dot('dotZero', cfg.zero ? 'good' : 'warn'); $('txtZero').textContent = cfg.zero ? '영점 설정' : '영점 없음';
   $('benchMode').checked = !!cfg.bench;
@@ -587,11 +587,31 @@ function startAxisDetect() {
 }
 
 // ------------------------------------------------------------------ ② 수동 구동
-function applyLimits(quiet = false) {
-  const umax = Math.round(Math.max(0, Math.min(255, +$('uMax').value)));
-  const alim = Math.round(Math.max(5, Math.min(180, +$('aLim').value)) * 100);
-  send(`LIM ${umax} ${alim} ${$('allowRev').checked ? 1 : 0}`, quiet);
-  if (S.devState !== 2 && S.devState !== 3) send(`STREAM ${$('rate').value}`, quiet);
+function limitsFromForm() {
+  return {
+    umax: Math.round(Math.max(0, Math.min(255, +$('uMax').value))),
+    alim: Math.round(Math.max(5, Math.min(180, +$('aLim').value)) * 100),
+    rev: $('allowRev').checked ? 1 : 0,
+    div: +$('rate').value,
+  };
+}
+
+// what: 'lim' = 한계만, 'stream' = 샘플링만, 생략 = 둘 다
+function applyLimits(quiet = false, what) {
+  const f = limitsFromForm();
+  if (what !== 'stream') send(`LIM ${f.umax} ${f.alim} ${f.rev}`, quiet);
+  if (what !== 'lim' && S.devState !== 2 && S.devState !== 3) send(`STREAM ${f.div}`, quiet);
+}
+
+// 입력란과 보드 설정(CFG)이 다르면 경고 — 슬라이더·시험 범위는 보드 값을 따름
+function updateLimMsg() {
+  const c = S.cfg, el = $('limMsg');
+  if (c.umax == null) { el.textContent = ''; return; }
+  const f = limitsFromForm();
+  const diff = f.umax !== c.umax || f.alim !== c.alim || f.rev !== c.rev || (c.div != null && f.div !== c.div);
+  el.textContent = `보드: 최대 PWM ${c.umax} · 한계 ${c.alim / 100}° · 역추력 ${c.rev ? '허용' : '금지'} · Ts ${c.ts_ms} ms` +
+    (diff ? '  ⚠ 입력값이 아직 보드에 적용되지 않음' : '');
+  el.style.color = diff ? 'var(--warn)' : '';
 }
 
 function updateManualRange() {
@@ -1019,6 +1039,10 @@ function init() {
 
   // ②
   $('limApplyBtn').onclick = () => applyLimits(false);
+  // 한계·샘플링 입력은 바꾸는 즉시 보드에 적용 (연결 중일 때)
+  ['uMax', 'aLim', 'allowRev'].forEach((id) => $(id).addEventListener('change', () => { if (S.connected) applyLimits(false, 'lim'); else updateLimMsg(); }));
+  $('rate').addEventListener('change', () => { if (S.connected) applyLimits(false, 'stream'); else updateLimMsg(); });
+  ['uMax', 'aLim'].forEach((id) => $(id).addEventListener('input', updateLimMsg));
   $('benchMode').onchange = () => {
     const on = $('benchMode').checked;
     if (!send(`BENCH ${on ? 1 : 0}`)) $('benchMode').checked = !on;
