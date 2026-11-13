@@ -259,7 +259,24 @@ try {
     Send 'STOP' 300 | Out-Null
     $script:p.WriteLine('REF 500'); $script:lines.Clear(); Pump 1700 -NoPing
     Check '폐루프 유지 중 통신 두절 → 정지' ((Text $script:lines) -match 'EVT ABORT LINK_TIMEOUT') (Text $script:lines)
-    Send 'PID 0 0 0 150' 200 | Out-Null
+
+    # ---- 폐루프 최소 PWM (모터가 멈추지 않도록 하한)
+    $r = Send 'PID 5000 0 0 150 80' 250
+    Check 'PID 최소 PWM 설정 → PIDCFG umin=80' ((Text $r) -match 'PIDCFG kp=5\.000 .* umin=80') (Text $r)
+    $r = Send 'PID 5000 0 0 150 300' 250; Check '최소 PWM 범위 밖 거부' ((Text $r) -match 'ERR BAD_ARGS') (Text $r)
+    $r = Send 'REF -3000' 600
+    $d = @(DRef $r | Where-Object { $_.ref -eq -3000 })
+    Check '기준이 낮아 출력이 음수여야 할 때 → 최소 PWM(80)에서 멈춤' ($d.Count -gt 20 -and @($d | Where-Object { $_.u -lt 80 }).Count -eq 0 -and ($d | Select-Object -Last 1).u -eq 80) "u 최소 $(($d | Measure-Object -Property u -Minimum).Minimum), 마지막 $(($d | Select-Object -Last 1).u)"
+    Send 'STOP' 200 | Out-Null
+    Send 'PID 0 20000 0 150 80' 200 | Out-Null
+    Send 'REF -3000' 1500 | Out-Null                                     # 적분만: 하한에 붙은 뒤 1.2 s 이상 유지
+    $r = Send 'REF 500' 300
+    $d = @(DRef $r | Where-Object { $_.ref -eq 500 })
+    Check '하한에서 적분 정지 → 기준이 다시 오르면 0.3 s 안에 바로 회복' ($d.Count -gt 5 -and ($d | Select-Object -Last 1).u -ge 84) "0.3 s 뒤 u=$(($d | Select-Object -Last 1).u) (와인드업이면 80 에 계속 붙어 있음)"
+    $r = Send 'PID 2000 0 0 150' 250
+    Check '인자 4개 PID 는 최소 PWM 유지 (umin=80)' ((Text $r) -match 'umin=80') (Text $r)
+    Send 'STOP' 200 | Out-Null
+    Send 'PID 0 0 0 150 0' 200 | Out-Null
 
     # ---- 타이밍
     $script:lines.Clear(); Pump 1200

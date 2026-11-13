@@ -13,7 +13,7 @@
 6. Z-N 설계·시험
 7. 강화학습 제어기
 
-**1–3은 완료**, **4–6은 구현 완료(펌웨어 2.1 업로드, 보드 벤치 시험 62/62 통과)이고 모터를 돌리는 하드웨어 폐루프 시험은 아직**, **7은 시작 전**입니다(2026-11-13). 현재 결론은 [docs/RESULTS.md](docs/RESULTS.md)에 있습니다.
+**1–3은 완료**, **4–6은 구현 완료(펌웨어 2.1 업로드, 보드 벤치 시험 67/67 통과)이고 모터를 돌리는 하드웨어 폐루프 시험은 아직**, **7은 시작 전**입니다(2026-11-13). 현재 결론은 [docs/RESULTS.md](docs/RESULTS.md)에 있습니다.
 
 ## 저장소 지도
 
@@ -24,7 +24,7 @@
 | `analysis/` | Python 분석·설계 (`aero_analyze.py`, `aero_freqresp.py`, `aero_model_fit.py`, `pid_design.py`) |
 | `matlab/` | MATLAB 분석 (`aero_load`, `aero_iddata`, `aero_sysid(_all)`, `aero_static_map`, `aero_pid_design`) |
 | `data/<날짜>_runN/` | 원본 CSV(수정 금지) + `analysis/REPORT.md` |
-| `scripts/` | `Build-Lab.ps1`(컴파일·업로드), `Test-LabFirmware.ps1`(보드 시험 60여 항목), `test_sysid.js` |
+| `scripts/` | `Build-Lab.ps1`(컴파일·업로드), `Test-LabFirmware.ps1`(보드 시험 67항목), `test_sysid.js` |
 | `docs/` | `EXPERIMENT_GUIDE`, `PROTOCOL`, `HARDWARE`, `RESULTS`, `DEVELOPMENT` |
 
 ## 반드시 지킬 것

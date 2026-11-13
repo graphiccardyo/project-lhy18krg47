@@ -2,6 +2,7 @@
 // 플랜트 = 2026-11-06 식별 결과 (data/20261106_run3/analysis/REPORT.md):
 //   θss(PWM) = 정적 특성(run2 계단 평균, 운전점 PWM 150 기울기 ≈ 0.2 °/PWM)
 //   동특성   = 지연 16 ms → 1차 지연 T = 0.328 s → 구조 공진 3.47 Hz, ζ = 0.123
+// + 저속 정지(PWM < 30)와 재기동 지연(멈춘 뒤 PWM ≥ 45 에서 0.15 s) — 실제 장치의 관찰을 흉내 낸 값
 // 입력 u 는 펌웨어와 같이 PWM 카운트(0..255). 폐루프(PID/노치/CLSTEP/RELAY/REF)도 펌웨어와 같은 식으로 계산.
 (function (root) {
   'use strict';
@@ -20,14 +21,16 @@
   class SimDevice {
     constructor() {
       this.onLine = null;
-      this.p = { T: 0.328, L: 0.016, wr: 21.8, zr: 0.123, noise: 0.04, mount: 3.0, gain: 1.0 };
+      this.p = { T: 0.328, L: 0.016, wr: 21.8, zr: 0.123, noise: 0.04, mount: 3.0, gain: 1.0,
+        stallPwm: 30, startPwm: 45, startDelay: 0.15 };   // 모터 정지·재기동: 30 미만이면 멈추고, 멈춘 뒤엔 45 이상에서 0.15 s 지나야 다시 추력
+      this.motorOn = false; this.startT = 0;
       this.x1 = 0; this.y = 0; this.yd = 0; this.ubuf = new Array(16).fill(0);
       this.cfg = { axis: 'X', sign: '+', beta: 20, dlpf: 4, div: 2, umax: 255, alim: 12000, rev: 0, bench: 0, cal: 0, zero: 0 };
       this.defaultAo = [-0.017059, -0.022036, 0.147525];
       this.calv = { gb: [0, 0, 0], ao: this.defaultAo.slice(), g0: [0, 0, 1] };
       this.trueBias = [0.92, -1.01, -0.15];
       this.trueAccOff = [-0.017, -0.022, 0.147];
-      this.pid = { kp: 0, ki: 0, kd: 0, ff: 150, nfc: 0, nzz: 150, nzp: 700, b: [1, 0, 0], a: [0, 0] };
+      this.pid = { kp: 0, ki: 0, kd: 0, ff: 150, umin: 0, nfc: 0, nzz: 150, nzp: 700, b: [1, 0, 0], a: [0, 0] };
       this.pidI = 0; this.omF = 0; this.nz1 = 0; this.nz2 = 0; this.ref = 0; this.clHold = false;
       this.theta = 0; this.omega = 0;
       this.uMan = 0; this.uOut = 0; this.phase = 0;
@@ -59,7 +62,7 @@
     }
     printPid() {
       const q = this.pid;
-      this.emit(`PIDCFG kp=${q.kp.toFixed(3)} ki=${q.ki.toFixed(3)} kd=${q.kd.toFixed(3)} ff=${q.ff} notch=${q.nfc} zz=${q.nzz} zp=${q.nzp}`);
+      this.emit(`PIDCFG kp=${q.kp.toFixed(3)} ki=${q.ki.toFixed(3)} kd=${q.kd.toFixed(3)} ff=${q.ff} notch=${q.nfc} zz=${q.nzz} zp=${q.nzp} umin=${q.umin}`);
     }
 
     // ---- 폐루프 (펌웨어 pidStep 과 같은 식)
@@ -83,7 +86,7 @@
         this.nz2 = q.b[2] * v - q.a[1] * y;
         v = y;
       }
-      const u = q.ff + v, lo = this.cfg.rev ? -this.cfg.umax : 0, hi = this.cfg.umax;
+      const hi = this.cfg.umax, lo = this.cfg.rev ? -this.cfg.umax : Math.min(q.umin, hi), u = q.ff + v;   // 하한 = 최소 PWM
       const us = Math.min(hi, Math.max(lo, u));
       if (u === us || (u > us && e < 0) || (u < us && e > 0)) this.pidI = Math.max(-255, Math.min(255, this.pidI + q.ki * e * ts));
       return Math.round(us);
@@ -108,9 +111,9 @@
           if (tok.length !== 2 || !(Math.abs(ints[0]) <= 255)) return bad();
           this.clHold = false; this.uMan = ints[0]; return;
         case 'PID':
-          // 펌웨어와 같은 범위: Kp ≤ 200, Ki ≤ 500, Kd ≤ 50 (×1000), ff 0–255
-          if (tok.length !== 5 || ints.some((x) => !Number.isInteger(x) || x < 0) || ints[0] > 200000 || ints[1] > 500000 || ints[2] > 50000 || ints[3] > 255) return bad();
-          Object.assign(this.pid, { kp: ints[0] / 1000, ki: ints[1] / 1000, kd: ints[2] / 1000, ff: ints[3] });
+          // 펌웨어와 같은 범위: Kp ≤ 200, Ki ≤ 500, Kd ≤ 50 (×1000), ff 0–255, [umin 0–255]
+          if ((tok.length !== 5 && tok.length !== 6) || ints.some((x) => !Number.isInteger(x) || x < 0) || ints[0] > 200000 || ints[1] > 500000 || ints[2] > 50000 || ints[3] > 255 || (tok.length === 6 && ints[4] > 255)) return bad();
+          Object.assign(this.pid, { kp: ints[0] / 1000, ki: ints[1] / 1000, kd: ints[2] / 1000, ff: ints[3] }, tok.length === 6 ? { umin: ints[4] } : {});
           return this.printPid();
         case 'NOTCH':
           if (tok.length === 2 && ints[0] === 0) this.pid.nfc = 0;
@@ -222,7 +225,7 @@
           if (n === p.a) { p.center = p.cnt ? p.sum / p.cnt : this.pid.ff; p.level = 1; }
           const e = this.ref - this.theta;
           if (e > p.h) p.level = 1; else if (e < -p.h) p.level = -1;
-          u = Math.round(p.center + p.level * p.d); this.phase = 2;
+          u = Math.round(p.center + p.level * p.d); if (!this.cfg.rev && u < this.pid.umin) u = this.pid.umin; this.phase = 2;
         }
       }
       p.n++;
@@ -241,7 +244,13 @@
       const { T, wr, zr, gain } = this.p;
       this.ubuf.push(this.cfg.bench ? 0 : this.uOut);
       const ud = this.ubuf.shift();
-      this.x1 += (gain * thetaSS(ud) - this.x1) * dt / T;
+      // 저속 정지와 재기동 지연 (실제 모터: 일정 PWM 아래에서 멈추고, 다시 돌기까지 시간이 걸림)
+      const P = this.p;
+      if (this.motorOn) { if (Math.abs(ud) < P.stallPwm) this.motorOn = false; }
+      else if (Math.abs(ud) >= P.startPwm) { this.startT += dt; if (this.startT >= P.startDelay) { this.motorOn = true; this.startT = 0; } }
+      else this.startT = 0;
+      const target = this.motorOn ? gain * thetaSS(ud) : 0;
+      this.x1 += (target - this.x1) * dt / T;
       this.yd += (wr * wr * (this.x1 - this.y) - 2 * zr * wr * this.yd) * dt;
       this.y += this.yd * dt;
     }
