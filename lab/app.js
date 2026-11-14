@@ -110,7 +110,7 @@ async function connect(sim) {
     else banner('연결 실패: ' + e.message + ' — 다른 프로그램(시리얼 모니터 등)이 포트를 쓰고 있지 않은지 확인하세요.');
     return;
   }
-  S.link = link; S.connected = true; S.isSim = sim; S.helloSent = false; S.fw = ''; S.synced = false;
+  S.link = link; S.connected = true; S.isSim = sim; S.helloSent = false; S.fw = ''; S.fwHasPid = undefined; S.synced = false;
   S.live = { t: [], u: [], th: [], om: [], tha: [], ph: [], ref: [] }; S.lastTms = null; S.drops = 0;
   $('connectBtn').textContent = '연결 해제';
   $('simBtn').disabled = true; $('connectBtn').disabled = false;
@@ -128,6 +128,7 @@ function hello() {
   S.helloSent = true;
   send('HELLO');
   applyLimits(true);
+  if (S.fwHasPid) applyPid(true);   // 보드 이득은 전원을 켜면 0 → 입력란 값을 다시 보냄
   send('GET', true);          // PIDCFG 포함 현재 설정
 }
 
@@ -833,43 +834,33 @@ function runEstimate() {
 }
 
 // ------------------------------------------------------------------ ⑥ 폐루프·PID
-// analysis/pid_design.py 결과 (식별 모델, K 0.12–0.21 × 공진 ±10% 에서 Ms ≤ 1.6 / P 는 Ms ≤ 2)
-const PRESETS = {
-  P: { kp: 3.70, ki: 0, kd: 0, notch: false },
-  PI: { kp: 2.76, ki: 8.40, kd: 0, notch: false },
-  PIN: { kp: 7.85, ki: 23.9, kd: 0, notch: true },
-  PIDN: { kp: 7.89, ki: 24.0, kd: 0.129, notch: true },
-  ZNPID: { kp: 6.89, ki: 46.1, kd: 0.258, notch: false },
-  ZNPIDN: { kp: 6.89, ki: 46.1, kd: 0.258, notch: true },
-};
-
 function pidFromForm() {
   const notch = $('notchOn').checked ? { f: +$('nf').value, zz: +$('nzz').value, zp: +$('nzp').value } : null;
   return { kp: +$('kp').value, ki: +$('ki').value, kd: +$('kd').value, ff: Math.round(+$('ff').value), umin: Math.round(+$('umin').value || 0), notch };
 }
 
-function loadPreset(k) {
-  const p = PRESETS[k];
-  if (!p) return;
-  $('kp').value = p.kp; $('ki').value = p.ki; $('kd').value = p.kd; $('notchOn').checked = p.notch;
-  if (p.notch) { $('nf').value = 3.47; $('nzz').value = 0.15; $('nzp').value = 0.7; }
-  if (k === 'ZNPID') banner('Z-N PID(노치 없음)는 모델상 이득이 큰 쪽(K≈0.21)이나 공진 −10%에서 불안정합니다. 각도 한계를 낮게 두고 시험하세요.');
-  updatePidPred(); saveForm();
+function pidError(g, umax) {
+  if (![g.kp, g.ki, g.kd].every((v) => Number.isFinite(v) && v >= 0) || !(g.ff >= 0 && g.ff <= 255)) return '이득은 0 이상의 숫자, ff 는 0–255 입니다.';
+  if (g.kp > 200 || g.ki > 500 || g.kd > 50) return '이득 범위: Kp ≤ 200, Ki ≤ 500, Kd ≤ 50 (펌웨어 제한).';
+  if (g.notch && g.notch.f > 0 && !(g.notch.f >= 0.1 && g.notch.f <= 20 && g.notch.zz >= 0 && g.notch.zz <= 2 && g.notch.zp > 0 && g.notch.zp <= 2))
+    return '노치 범위: f 0.1–20 Hz, ζz 0–2, ζp 0–2 (ζp > 0).';
+  if (!(g.umin >= 0 && g.umin <= 255)) return '최소 PWM 은 0–255 입니다.';
+  if (umax != null && g.umin >= umax) return `최소 PWM(${g.umin})이 최대 PWM(${umax}) 이상입니다.`;
+  return '';
 }
 
-function applyPid() {
+// auto = 연결 직후 자동 재전송 (보드는 전원을 켜면 이득이 0). 경고는 로그로만
+function applyPid(auto = false) {
   const g = pidFromForm();
-  if (![g.kp, g.ki, g.kd].every((v) => Number.isFinite(v) && v >= 0) || !(g.ff >= 0 && g.ff <= 255)) return banner('이득은 0 이상의 숫자, ff 는 0–255 입니다.');
-  if (g.kp > 200 || g.ki > 500 || g.kd > 50) return banner('이득 범위: Kp ≤ 200, Ki ≤ 500, Kd ≤ 50 (펌웨어 제한).');
-  if (g.notch && g.notch.f > 0 && !(g.notch.f >= 0.1 && g.notch.f <= 20 && g.notch.zz >= 0 && g.notch.zz <= 2 && g.notch.zp > 0 && g.notch.zp <= 2))
-    return banner('노치 범위: f 0.1–20 Hz, ζz 0–2, ζp 0–2 (ζp > 0).');
-  if (S.connected && !S.isSim && S.fwHasPid === false) banner(`보드 펌웨어(${S.fw})에는 PID 명령이 없습니다. 펌웨어를 다시 업로드하세요.`);
-  if (!(g.umin >= 0 && g.umin <= 255)) return banner('최소 PWM 은 0–255 입니다.');
-  if (S.cfg.umax != null && g.umin >= S.cfg.umax) return banner(`최소 PWM(${g.umin})이 최대 PWM(${S.cfg.umax}) 이상입니다.`);
-  if (g.umin > g.ff) banner(`참고: 최소 PWM(${g.umin})이 ff(${g.ff})보다 큽니다. 기준 근처에서도 출력이 ${g.umin} 아래로 내려가지 않습니다.`);
-  send(`PID ${Math.round(g.kp * 1000)} ${Math.round(g.ki * 1000)} ${Math.round(g.kd * 1000)} ${g.ff} ${g.umin}`);
-  if (g.notch && g.notch.f > 0) send(`NOTCH ${Math.round(g.notch.f * 100)} ${Math.round(g.notch.zz * 1000)} ${Math.round(g.notch.zp * 1000)}`);
-  else send('NOTCH 0');
+  const e = pidError(g, auto ? limitsFromForm().umax : S.cfg.umax);
+  if (e) { if (auto) log('입력란의 이득을 자동으로 보내지 않음: ' + e, 'e'); else banner(e); return false; }
+  if (!auto && S.connected && !S.isSim && S.fwHasPid === false) banner(`보드 펌웨어(${S.fw})에는 PID 명령이 없습니다. 펌웨어를 다시 업로드하세요.`);
+  if (!auto && g.umin > g.ff) banner(`참고: 최소 PWM(${g.umin})이 ff(${g.ff})보다 큽니다. 기준 근처에서도 출력이 ${g.umin} 아래로 내려가지 않습니다.`);
+  send(`PID ${Math.round(g.kp * 1000)} ${Math.round(g.ki * 1000)} ${Math.round(g.kd * 1000)} ${g.ff} ${g.umin}`, auto);
+  if (g.notch && g.notch.f > 0) send(`NOTCH ${Math.round(g.notch.f * 100)} ${Math.round(g.notch.zz * 1000)} ${Math.round(g.notch.zp * 1000)}`, auto);
+  else send('NOTCH 0', auto);
+  if (auto) log(`입력란의 이득을 보드에 다시 보냄 (Kp ${g.kp} · Ki ${g.ki} · Kd ${g.kd} · ff ${g.ff} · 최소 PWM ${g.umin})`, 'ok');
+  return true;
 }
 
 function onPidCfg(line) {
@@ -1001,10 +992,7 @@ const PERSIST = ['kp', 'ki', 'kd', 'ff', 'umin', 'notchOn', 'nf', 'nzz', 'nzp', 
   'rlR', 'rlD', 'rlH', 'rlPre', 'rlDur', 'calZero', 'uMax', 'aLim', 'allowRev', 'rate', 'stStart', 'stEnd', 'stInc', 'stDwell', 'stSettle', 'u0', 'pre',
   'stepDu', 'stepHold', 'stepPost', 'chAmp', 'chF0', 'chF1', 'chDur', 'chLog', 'prAmp', 'prBit', 'prDur', 'autoSave', 'nk'];
 function saveForm() {
-  const o = {};
-  for (const id of PERSIST) { const el = $(id); o[id] = el.type === 'checkbox' ? el.checked : el.value; }
-  o.dynType = S.dynType;
-  localStorage.setItem('aeroLab.form.v2', JSON.stringify(o));
+  try { localStorage.setItem('aeroLab.form.v2', JSON.stringify(formValues())); } catch (_) {}
 }
 function loadForm() {
   try {
@@ -1012,6 +1000,113 @@ function loadForm() {
     for (const id of PERSIST) if (id in o) { const el = $(id); if (el.type === 'checkbox') el.checked = o[id]; else el.value = o[id]; }
     if (o.dynType) S.dynType = o.dynType;
   } catch (_) {}
+}
+
+// ------------------------------------------------------------------ 저장된 설정 (이름 붙인 묶음, 브라우저 localStorage + JSON 파일)
+const PRESET_KEY = 'aeroLab.presets.v1', PRESET_FORMAT = 'aeropend-lab-settings';
+function readPresets() {
+  try { const o = JSON.parse(localStorage.getItem(PRESET_KEY) || '{}'); return o && typeof o === 'object' ? o : {}; } catch (_) { return {}; }
+}
+function writePresets(o) {
+  try { localStorage.setItem(PRESET_KEY, JSON.stringify(o)); return true; }
+  catch (e) { banner('설정을 저장하지 못했습니다 (브라우저 저장소 사용 불가): ' + e.message); return false; }
+}
+function formValues() {
+  const o = {};
+  for (const id of PERSIST) { const el = $(id); o[id] = el.type === 'checkbox' ? el.checked : el.value; }
+  o.dynType = S.dynType;
+  return o;
+}
+function presetLabel(name, v) {
+  const n = (x) => (x === undefined || x === '' ? '?' : +x);
+  return `${name} — Kp ${n(v.kp)} · Ki ${n(v.ki)} · Kd ${n(v.kd)} · ff ${n(v.ff)}${+v.umin ? ' · 최소 ' + v.umin : ''}${v.notchOn ? ' · 노치' : ''}`;
+}
+function refreshPresetSel(select) {
+  const all = readPresets(), sel = $('presetSel'), keep = select ?? sel.value;
+  const names = Object.keys(all).sort((a, b) => a.localeCompare(b, 'ko'));
+  sel.replaceChildren(new Option(names.length ? '— 선택 —' : '— 없음 —', ''));
+  for (const k of names) sel.add(new Option(presetLabel(k, all[k].values || {}), k));
+  sel.value = names.includes(keep) ? keep : '';
+}
+function savePreset() {
+  const name = $('presetName').value.trim() || $('presetSel').value;
+  if (!name) return banner('저장할 이름을 입력하세요.');
+  const all = readPresets();
+  if (all[name] && !confirm(`"${name}" 설정이 이미 있습니다. 현재 값으로 덮어쓸까요?`)) return;
+  all[name] = { saved: new Date().toISOString(), values: formValues() };
+  if (!writePresets(all)) return;
+  refreshPresetSel(name); $('presetName').value = '';
+  $('presetMsg').textContent = `"${name}" 저장됨`;
+  log(`설정 저장: ${name}`, 'ok');
+}
+function applyValues(v) {
+  const before = limitsFromForm();
+  let n = 0;
+  for (const id of PERSIST) {
+    if (!(id in v)) continue;
+    const el = $(id);
+    if (el.type === 'checkbox') el.checked = !!v[id]; else el.value = v[id];
+    n++;
+  }
+  if (v.dynType && ['STEP', 'CHIRP', 'PRBS'].includes(v.dynType)) {
+    S.dynType = v.dynType; setSeg('dynSeg', S.dynType);
+    document.querySelectorAll('[data-dyn]').forEach((el) => (el.hidden = el.dataset.dyn !== S.dynType));
+  }
+  updatePidPred(); updateDynInfo(); updateStaticInfo(); updateU0V(); saveForm();
+  // 안전 한계·샘플링이 바뀌었으면 입력란을 바꿀 때처럼 바로 보드에 적용
+  const after = limitsFromForm();
+  if (S.connected) {
+    const lim = after.umax !== before.umax || after.alim !== before.alim || after.rev !== before.rev, st = after.div !== before.div;
+    if (lim && st) applyLimits(false); else if (lim) applyLimits(false, 'lim'); else if (st) applyLimits(false, 'stream');
+  }
+  updateLimMsg();
+  return n;
+}
+function loadPresetByName(name) {
+  const p = readPresets()[name];
+  if (!p) return banner('불러올 설정을 고르세요.');
+  applyValues(p.values || {});
+  const extra = S.connected ? ' 이득은 [이득 적용]을 눌러야 보드에 들어갑니다.' : '';
+  $('presetMsg').textContent = `"${name}" 불러옴 (${p.saved ? new Date(p.saved).toLocaleString('ko-KR', { hour12: false }) + ' 저장' : ''}).${extra}`;
+  log(`설정 불러옴: ${name}`, 'ok');
+}
+function deletePreset() {
+  const name = $('presetSel').value;
+  if (!name) return banner('삭제할 설정을 고르세요.');
+  if (!confirm(`"${name}" 설정을 삭제할까요?`)) return;
+  const all = readPresets(); delete all[name];
+  if (writePresets(all)) { refreshPresetSel(''); $('presetMsg').textContent = `"${name}" 삭제됨`; }
+}
+function exportPresets() {
+  const all = readPresets();
+  if (!Object.keys(all).length) return banner('내보낼 저장 설정이 없습니다. 먼저 [현재 값 저장]을 누르세요.');
+  const d = new Date(), p2 = (x) => String(x).padStart(2, '0');
+  download(`aeropend_settings_${d.getFullYear()}${p2(d.getMonth() + 1)}${p2(d.getDate())}.json`,
+    JSON.stringify({ format: PRESET_FORMAT, version: 1, presets: all }, null, 2));
+}
+async function importPresets(file) {
+  let o;
+  try { o = JSON.parse(await file.text()); } catch (e) { return banner(`${file.name}: JSON 형식이 아닙니다.`); }
+  if (!o || o.format !== PRESET_FORMAT || typeof o.presets !== 'object') return banner(`${file.name}: 실험실 설정 파일이 아닙니다.`);
+  const all = readPresets(), names = Object.keys(o.presets).filter((k) => o.presets[k] && typeof o.presets[k].values === 'object');
+  const dup = names.filter((k) => all[k]);
+  if (dup.length && !confirm(`같은 이름이 이미 있습니다: ${dup.join(', ')}\n파일의 값으로 덮어쓸까요? (취소하면 겹치는 것은 건너뜀)`))
+    names.splice(0, names.length, ...names.filter((k) => !all[k]));
+  for (const k of names) all[k] = { saved: o.presets[k].saved || null, values: o.presets[k].values };
+  if (!writePresets(all)) return;
+  refreshPresetSel(names[0]);
+  $('presetMsg').textContent = `${file.name}: ${names.length}개 가져옴`;
+  log(`설정 가져오기: ${file.name} (${names.join(', ') || '없음'})`, 'ok');
+}
+function initPresets() {
+  refreshPresetSel('');
+  $('presetSaveBtn').onclick = savePreset;
+  $('presetLoadBtn').onclick = () => loadPresetByName($('presetSel').value);
+  $('presetDelBtn').onclick = deletePreset;
+  $('presetExportBtn').onclick = exportPresets;
+  $('presetImportBtn').onclick = () => $('presetFile').click();
+  $('presetFile').onchange = async (e) => { for (const f of e.target.files) await importPresets(f); e.target.value = ''; };
+  $('presetName').addEventListener('keydown', (e) => { if (e.key === 'Enter') savePreset(); });
 }
 
 function stopNow() {
@@ -1087,8 +1182,8 @@ function init() {
   $('dynRunBtn').onclick = runDyn;
 
   // ⑥
-  $('pidPresetBtn').onclick = () => loadPreset($('pidPreset').value);
-  $('pidApplyBtn').onclick = applyPid;
+  initPresets();
+  $('pidApplyBtn').onclick = () => applyPid(false);
   ['kp', 'ki', 'kd', 'ff', 'umin', 'notchOn', 'nf', 'nzz', 'nzp'].forEach((id) => $(id).addEventListener('input', updatePidPred));
   $('notchOn').addEventListener('change', updatePidPred);
   $('refBtn').onclick = () => { const r = +$('refVal').value; if (Number.isFinite(r)) send(`REF ${Math.round(r * 100)}`); };

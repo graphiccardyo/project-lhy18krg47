@@ -37,6 +37,8 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 button.primary { background: var(--s1); border-color: transparent; color: #fff; font-weight: 600; }
 button.stop { background: var(--crit); border-color: transparent; color: var(--on-crit); font-weight: 700; font-size: 16px; padding: 8px 22px; }
 button.small { padding: 3px 8px; font-size: 12.5px; }
+  .presets { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; margin: 6px 0 10px; }
+  .presets .row + .row { margin-top: 6px; }
 input[type=number], input[type=text], select { font: inherit; padding: 5px 7px; border-radius: 7px; border: 1px solid var(--border); background: var(--surface); color: var(--ink); }
 input[type=number] { width: 82px; }
 main { display: grid; grid-template-columns: minmax(380px, 470px) minmax(0, 1fr); gap: 14px; padding: 14px 18px 18px; max-width: 1700px; margin: auto; align-items: start; }
@@ -265,22 +267,23 @@ details summary { cursor: pointer; color: var(--ink-2); font-size: 13px; }
       <div class="tab" id="tPid">
         <h2>제어기 이득</h2>
         <div class="note">u = ff + Kp·e + Ki·∫e − Kd·ω<sub>f</sub> (e = 기준 − θ, D는 자이로 각속도 10 Hz 저역통과), 출력 포화 0–최대 PWM + 적분 정지. 선택: 출력단 노치(3.5 Hz 구조 공진 억제). 설계 근거: <code>analysis/pid_design.py</code> (식별 모델 K 0.12–0.21 × 공진 ±10%에서 Ms ≤ 1.6).</div>
-        <div class="row"><select id="pidPreset">
-          <option value="">— 설계 프리셋 —</option>
-          <option value="P">P (목표 4: 폐루프 스텝, Kp 3.7)</option>
-          <option value="PI">PI (노치 없음, 느림·안전)</option>
-          <option value="PIN" selected>PI + 노치 (권장)</option>
-          <option value="PIDN">PID + 노치 (Td=0.05Ti)</option>
-          <option value="ZNPID">Z-N PID (모델 계산값 — 불안정 위험)</option>
-          <option value="ZNPIDN">Z-N PID + 노치</option>
-        </select><button id="pidPresetBtn" class="small">불러오기</button></div>
+        <div class="presets">
+          <div class="row"><b>저장된 설정</b><select id="presetSel"><option value="">— 없음 —</option></select>
+            <button id="presetLoadBtn" class="small">불러오기</button><button id="presetDelBtn" class="small">삭제</button></div>
+          <div class="row"><input id="presetName" type="text" maxlength="40" placeholder="이름 (예: PI 1차)" style="width:170px">
+            <button id="presetSaveBtn" class="small">현재 값 저장</button>
+            <button id="presetExportBtn" class="small">파일로 내보내기</button><button id="presetImportBtn" class="small">파일에서 가져오기</button>
+            <input id="presetFile" type="file" accept=".json,application/json" hidden></div>
+          <div class="note">이득·ff·최소 PWM·노치와 함께 모든 탭의 시험 설정과 안전 한계(최대 PWM·각도 한계·역추력·샘플링)를 한 묶음으로 이 브라우저에 저장합니다. 팀원과 나누려면 파일로 내보내세요. 보드는 전원을 켜면 이득이 0이 되므로, 연결하면 입력란의 이득을 자동으로 다시 보냅니다.</div>
+          <div class="sub" id="presetMsg"></div>
+        </div>
         <div class="grid2">
-          <label>Kp</label><span class="row"><input id="kp" type="number" min="0" step="0.1" value="7.85"> PWM/°</span>
-          <label>Ki</label><span class="row"><input id="ki" type="number" min="0" step="0.5" value="23.9"> PWM/(°·s) <span class="note" id="tiTxt"></span></span>
+          <label>Kp</label><span class="row"><input id="kp" type="number" min="0" step="0.1" value="0"> PWM/°</span>
+          <label>Ki</label><span class="row"><input id="ki" type="number" min="0" step="0.5" value="0"> PWM/(°·s) <span class="note" id="tiTxt"></span></span>
           <label>Kd</label><span class="row"><input id="kd" type="number" min="0" step="0.01" value="0"> PWM/(°/s) <span class="note" id="tdTxt"></span></span>
           <label>피드포워드 ff</label><span class="row"><input id="ff" type="number" min="0" max="255" step="1" value="150"> PWM <span class="note">기준 근처 평형 PWM (정적 특성에서)</span></span>
           <label>최소 PWM</label><span class="row"><input id="umin" type="number" min="0" max="255" step="1" value="0"> PWM <span class="note">폐루프 출력 하한. 이 아래로 내려가면 모터가 멈췄다 다시 돌 때 지연이 크므로, 모터가 확실히 도는 PWM으로 (0 = 끔)</span></span>
-          <label>노치</label><span class="row"><label class="check"><input id="notchOn" type="checkbox" checked> 사용</label> f <input id="nf" type="number" min="0.1" max="20" step="0.01" value="3.47" style="width:70px"> Hz ζz <input id="nzz" type="number" min="0" max="2" step="0.01" value="0.15" style="width:62px"> ζp <input id="nzp" type="number" min="0.01" max="2" step="0.05" value="0.7" style="width:62px"></span>
+          <label>노치</label><span class="row"><label class="check"><input id="notchOn" type="checkbox"> 사용</label> f <input id="nf" type="number" min="0.1" max="20" step="0.01" value="3.47" style="width:70px"> Hz ζz <input id="nzz" type="number" min="0" max="2" step="0.01" value="0.15" style="width:62px"> ζp <input id="nzp" type="number" min="0.01" max="2" step="0.05" value="0.7" style="width:62px"></span>
         </div>
         <div class="row"><button id="pidApplyBtn" class="primary">이득 적용</button><span class="sub" id="pidMsg"></span></div>
         <div class="kv" id="pidPred">모델 예측: —</div>
