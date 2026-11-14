@@ -46,14 +46,17 @@
                            t: [s], theta: [deg], ref: [deg], pwm: [PWM]}]  (2샘플마다 1점)
         learning_curve   에피소드마다 [{episode, kind, status, ret, rms, miss_frac, mean_pwm, alpha, time_s}]
                          (time_s = 실행 시작 이후 보드 시계, 최근 2000개)
-        eval_scores      [{episode, rms_mean, per_scenario: [rms...], ss_mean, ss_per_scenario: [|e|...], time_s,
-                           manual(수동 평가면 True)}]   ss_* = 정상상태 평균 |e| (steady_metrics)
+        eval_scores      [{episode, rms_mean, per_scenario: [rms...], ss_mean, ss_per_scenario: [|e|...],
+                           bias_mean, ripple_mean, settle_mean, os_mean, bias_per_scenario, settle_per_scenario,
+                           time_s, manual(수동 평가면 True)}]   (steady_metrics: ss = 평균 |e|, bias = |창 평균 e|,
+                           ripple = 창 안 σ(e), settle = ±band 정착 시간 [s], os = 오버슈트 [%])
         snapshots        [{name, kind('periodic'|'best'|'manual'), episode, updates, eval_rms, recent_eval_rms, time}]
                          (에피소드·시각 순. eval_rms = 바로 그 정책의 평가 RMS(모르면 None),
                           recent_eval_rms = 저장 시점의 최근 평가 RMS, time = 'YYYY-MM-DDTHH:MM:SS')
         best_rms         best 스냅샷의 평가 RMS | None
         pending          처리 대기 중인 명령 ['snapshot', 'eval']
-        baseline         {rms_mean, per_scenario: [rms...], ss_mean, ss_per_scenario, episode, time_s} | None
+        baseline         {rms_mean, per_scenario, ss_mean, ss_per_scenario, bias_mean, ripple_mean, settle_mean,
+                          os_mean, bias_per_scenario, settle_per_scenario, episode, time_s} | None
                          (가장 최근 PID 기준선, 같은 평가 시나리오. run.baseline_every 평가마다 다시)
         baseline_history [baseline...] (기준선을 돌릴 때마다)
         counts           {fallbacks, aborts, misses, pauses, train_episodes, eval_episodes}
@@ -97,35 +100,79 @@ SNAP_DIR = 'checkpoints'
 SNAP_META = 'meta.json'
 
 
-def steady_metrics(rows, step_n: int, win_n: int) -> dict:
-    """정상상태 지표. rows: (t_ms, pwm, th, om, tha, phase, ref, ...), 기준 스텝이 샘플 step_n 에서.
-    창 1 = 스텝 직전 win_n 샘플, 창 2 = 에피소드 끝 win_n 샘플 (일찍 끝났으면 있는 것만).
-    ss_e1/ss_e2: 창 평균 e = ref − θ (부호 있음), ss_abs: 두 창의 평균 |e|, ss_pwm_sd: 창 안 PWM σ(창마다 평균을 뺀 합동)."""
-    out = dict(ss_e1=None, ss_e2=None, ss_abs=None, ss_pwm_sd=None)
+def steady_metrics(rows, step_n: int, win_n: int, band: float = 0.5, ts: float = 0.01, smooth_s: float = 0.2) -> dict:
+    """구간 지표. rows: (t_ms, pwm, th, om, tha, phase, ref, ...), 기준 스텝이 샘플 step_n 에서 (구간 1 = [0, step_n),
+    구간 2 = [step_n, 끝)). 정상상태 창 = 각 구간의 마지막 win_n 샘플 (일찍 끝났으면 있는 것만).
+
+    ss_e1/ss_e2: 창 평균 e = ref − θ (부호 있음)
+    ss_abs:      두 창의 평균 |e| (= 편향 + 리플이 섞인 값, 11-14 부터 쓰던 지표)
+    ss_bias:     창 평균 e 의 크기 |ē_w| 의 평균 — 오래 남는 오프셋 (적분·정책 영점 문제)
+    ss_ripple:   창 안 e 의 표준편차 (창마다 평균을 뺀 합동) — 공진·케이블 울림·잡음
+    ss_pwm_sd:   창 안 PWM 표준편차 (떨림)
+    settle1/2:   기준 변경 뒤 |e| 의 smooth_s 이동평균이 band 안에 끝까지 머물기 시작한 시각 [s].
+                 끝까지 못 들어오면 그 구간 길이 (검열값, 보수적)
+    os1/os2:     1° 이상 기준 변경마다 새 기준을 넘어간 최대량 / 스텝 크기 [%] (구간 1 의 시작 = 첫 샘플 θ)
+    settle_s:    settle1·2 평균, os_pct: os1·2 최대"""
+    keys = ('ss_e1', 'ss_e2', 'ss_abs', 'ss_bias', 'ss_ripple', 'ss_pwm_sd', 'settle1', 'settle2', 'os1', 'os2',
+            'settle_s', 'os_pct')
+    out = dict.fromkeys(keys)
     if not rows or win_n <= 0:
         return out
     n = len(rows)
-    wins = []
+    segs = [(1, 0, min(step_n, n))]
     if n > step_n:
-        wins.append(('ss_e1', rows[max(0, step_n - win_n):step_n]))
-        if n - step_n >= win_n // 2:
-            wins.append(('ss_e2', rows[max(step_n, n - win_n):]))
-    else:
-        wins.append(('ss_e1', rows[max(0, n - win_n):]))
-    ae, cnt, uss = 0.0, 0, 0.0
-    for key, w in wins:
-        if not w:
+        segs.append((2, step_n, n))
+    th = np.array([x[2] for x in rows], float)
+    ref = np.array([x[6] for x in rows], float)
+    u = np.array([x[1] for x in rows], float)
+    e = ref - th
+    k = max(1, int(round(smooth_s / ts)))
+    ae, cnt, ess, uss, biases, settles, oss = 0.0, 0, 0.0, 0.0, [], [], []
+    prev_ref = th[0]
+    for idx, a, b in segs:
+        if b <= a:
             continue
-        e = [x[6] - x[2] for x in w]
-        u = [x[1] for x in w]
-        out[key] = round(sum(e) / len(e), 4)
-        ae += sum(abs(v) for v in e)
-        cnt += len(e)
-        um = sum(u) / len(u)
-        uss += sum((v - um) ** 2 for v in u)
+        r = ref[a]
+        # 정상상태 창 (구간 2 는 반 창 이상 있어야)
+        if idx == 1 or b - a >= win_n // 2:
+            w = slice(max(a, b - win_n), b)
+            ew, uw = e[w], u[w]
+            m = float(ew.mean())
+            out[f'ss_e{idx}'] = round(m, 4)
+            biases.append(abs(m))
+            ae += float(np.abs(ew).sum())
+            ess += float(((ew - m) ** 2).sum())
+            uss += float(((uw - uw.mean()) ** 2).sum())
+            cnt += len(ew)
+        # 정착 시간·오버슈트
+        step = r - prev_ref
+        if abs(step) >= 1.0:
+            seg = e[a:b]          # 구간 안에서만 뒤쪽(인과) 이동평균 — 구간 경계를 넘어 섞지 않음
+            cs = np.cumsum(np.insert(seg, 0, 0.0))
+            idx_ = np.arange(1, len(seg) + 1)
+            lo = np.maximum(0, idx_ - k)
+            es = (cs[idx_] - cs[lo]) / (idx_ - lo)
+            out_band = np.nonzero(np.abs(es) > band)[0]
+            if len(out_band) == 0:
+                st = 0.0
+            elif out_band[-1] >= b - a - 1:
+                st = (b - a) * ts                      # 끝까지 못 들어옴 → 구간 길이
+            else:
+                st = float(out_band[-1] + 1) * ts
+            ov = max(0.0, float(np.max((th[a:b] - r) * math.copysign(1.0, step))))
+            out[f'settle{idx}'] = round(float(st), 3)
+            out[f'os{idx}'] = round(float(100.0 * ov / abs(step)), 2)
+            settles.append(st)
+            oss.append(out[f'os{idx}'])
+        prev_ref = r
     if cnt:
         out['ss_abs'] = round(ae / cnt, 4)
+        out['ss_bias'] = round(float(np.mean(biases)), 4)
+        out['ss_ripple'] = round(math.sqrt(ess / cnt), 4)
         out['ss_pwm_sd'] = round(math.sqrt(uss / cnt), 3)
+    if settles:
+        out['settle_s'] = round(float(np.mean(settles)), 3)
+        out['os_pct'] = round(float(np.max(oss)), 2)
     return out
 
 
@@ -136,6 +183,21 @@ def _mean_or_none(xs):
 
 def _fmt(v, d=3):
     return '–' if v is None else f'{v:.{d}f}'
+
+
+def _seg_summary(sss: list) -> dict:
+    """시나리오별 steady_metrics 목록 → 평가·기준선 점수 필드 (실패한 시나리오는 {} → None)."""
+    g = lambda k: [s.get(k) for s in sss]
+    return dict(ss_mean=_mean_or_none(g('ss_abs')), ss_per_scenario=g('ss_abs'),
+                bias_mean=_mean_or_none(g('ss_bias')), bias_per_scenario=g('ss_bias'),
+                ripple_mean=_mean_or_none(g('ss_ripple')),
+                settle_mean=_mean_or_none(g('settle_s')), settle_per_scenario=g('settle_s'),
+                os_mean=_mean_or_none(g('os_pct')))
+
+
+def _seg_text(d: dict) -> str:
+    return (f'편향 {_fmt(d.get("bias_mean"))}° 리플 {_fmt(d.get("ripple_mean"))}° '
+            f'정착 {_fmt(d.get("settle_mean"), 2)} s OS {_fmt(d.get("os_mean"), 1)}%')
 
 
 def list_snapshots(run_dir: str) -> list:
@@ -536,14 +598,16 @@ class Trainer(threading.Thread):
                    ret=round(summ['ret'], 4), rms=round(summ['rms'], 4),
                    rms_after_step=round(extra_rms, 4) if extra_rms is not None else '',
                    mean_pwm=round(summ['mean_pwm'], 1), miss=summ['miss'], miss_frac=round(summ['miss_frac'], 4),
-                   mean_abs_du=round(summ['mean_abs_du'], 3), fallbacks_total=self.fallbacks,
+                   mean_abs_du=round(summ['mean_abs_du'], 3), mean_abs_di=round(summ.get('mean_abs_di', 0.0), 3),
+                   fallbacks_total=self.fallbacks,
                    updates=self.sac.updates, buffer=self.sac.buffer.n, alpha=round(sl['alpha'], 5),
                    q_loss=round(sl['q_loss'], 5) if not math.isnan(sl['q_loss']) else '',
                    pi_loss=round(sl['pi_loss'], 5) if not math.isnan(sl['pi_loss']) else '',
                    entropy=round(sl['entropy'], 4) if not math.isnan(sl['entropy']) else '',
                    motor_on_s=round(self.motor_on_s, 1))
         ss = ss or {}
-        row.update({k: ('' if ss.get(k) is None else ss[k]) for k in ('ss_e1', 'ss_e2', 'ss_abs', 'ss_pwm_sd')})
+        row.update({k: ('' if ss.get(k) is None else ss[k])
+                    for k in ('ss_e1', 'ss_e2', 'ss_abs', 'ss_pwm_sd', 'ss_bias', 'ss_ripple', 'settle_s', 'os_pct')})
         row['return'] = row.pop('ret')
         self.rec.log_row(row)
         ser = self._series(rows, kind, scenario, status, round(summ['rms'], 3), self.train_episodes)
@@ -552,7 +616,8 @@ class Trainer(threading.Thread):
             self.curve.append(dict(episode=self.train_episodes, kind=kind, status=status, ret=round(summ['ret'], 4),
                                    rms=round(summ['rms'], 3), miss_frac=round(summ['miss_frac'], 4),
                                    mean_pwm=round(summ['mean_pwm'], 1), alpha=round(sl['alpha'], 5),
-                                   ss_abs=ss.get('ss_abs'), ss_pwm_sd=ss.get('ss_pwm_sd'),
+                                   ss_abs=ss.get('ss_abs'), ss_pwm_sd=ss.get('ss_pwm_sd'), ss_bias=ss.get('ss_bias'),
+                                   ss_ripple=ss.get('ss_ripple'), settle_s=ss.get('settle_s'), os_pct=ss.get('os_pct'),
                                    time_s=round(self._elapsed(), 1)))
             if kind == 'train':
                 self.series.append(ser)
@@ -632,7 +697,7 @@ class Trainer(threading.Thread):
         if rows:
             seg = rows[step_n:] if len(rows) > step_n else rows
             ras = math.sqrt(sum((x[6] - x[2]) ** 2 for x in seg) / len(seg))
-        ss = steady_metrics(rows, step_n, int(round(c.run.ss_win_s / self.ts)))
+        ss = steady_metrics(rows, step_n, int(round(c.run.ss_win_s / self.ts)), c.run.settle_band_deg, self.ts)
         summ['ss'] = ss
         self._finish_episode(kind, scenario, status, rows, summ, home, r1, r2, step_n * self.ts, ras, ss)
         if status == 'abort':
@@ -677,7 +742,7 @@ class Trainer(threading.Thread):
         n = max(1, len(rows))
         seg = rows[step_n:]
         ras = math.sqrt(sum((x[6] - x[2]) ** 2 for x in seg) / max(1, len(seg)))
-        ss = steady_metrics(rows, step_n, int(round(c.run.ss_win_s / self.ts)))
+        ss = steady_metrics(rows, step_n, int(round(c.run.ss_win_s / self.ts)), c.run.settle_band_deg, self.ts)
         summ = dict(samples=len(rows), decisions=0, ret=0.0, rms=math.sqrt(se / n), mean_pwm=pw / n, miss=0,
                     miss_frac=0.0, mean_abs_du=0.0, ss=ss)
         self._finish_episode(kind, scenario, 'done', rows, summ, home, r1, r2, step_n * self.ts, ras, ss)
@@ -686,43 +751,46 @@ class Trainer(threading.Thread):
     # ================================================================== 단계
     def _baseline_round(self):
         self._set('baseline')
-        per, pss = [], []
+        per, sss = [], []
         for i, (home, r1, r2) in enumerate(self.cfg.run.eval_refs):
             self._home(home)
             s = self._pid_episode(home, r1, r2, 0.5, scenario=str(i))
             per.append(round(s['rms'], 4))
-            pss.append(s['ss']['ss_abs'])
-        ssm = _mean_or_none(pss)
-        b = dict(rms_mean=round(float(np.mean(per)), 4), per_scenario=per, ss_mean=ssm, ss_per_scenario=pss,
+            sss.append(s['ss'])
+        b = dict(rms_mean=round(float(np.mean(per)), 4), per_scenario=per, **_seg_summary(sss),
                  episode=self.train_episodes, time_s=round(self._elapsed(), 1))
+        ssm, pss = b['ss_mean'], b['ss_per_scenario']
         with self._lock:
             self.baseline = b
             self.baseline_history.append(b)
         self._event(f'PID 기준선 (학습 {self.train_episodes} ep): RMS {b["rms_mean"]:.3f}° {per}, '
-                    f'정상상태 |e| {_fmt(ssm)}° {pss}')
+                    f'정상상태 |e| {_fmt(ssm)}° {pss}, {_seg_text(b)}')
 
     def _eval_round(self, manual: bool = False):
         self._set('eval')
-        per, pss = [], []
+        per, sss = [], []
         for i, (home, r1, r2) in enumerate(self.cfg.run.eval_refs):
             self._home(home)
             s, status, _ = self._rl_episode('eval', home, r1, r2, 0.5, 'deterministic', scenario=str(i))
             self.eval_episodes += 1
             per.append(round(s['rms'], 4) if status == 'done' else round(s['rms'], 4) + 100.0)
-            pss.append(s['ss']['ss_abs'] if status == 'done' else None)
+            sss.append(s['ss'] if status == 'done' else {})
         self.eval_rounds += 1
         if manual:
             self.manual_evals += 1
         sc = dict(episode=self.train_episodes, rms_mean=round(float(np.mean(per)), 4), per_scenario=per,
-                  ss_mean=_mean_or_none(pss), ss_per_scenario=pss, time_s=round(self._elapsed(), 1))
+                  **_seg_summary(sss), time_s=round(self._elapsed(), 1))
+        pss = sc['ss_per_scenario']
         if manual:
             sc['manual'] = True
         with self._lock:
             self.eval_scores.append(sc)
         base = f' (PID {self.baseline["rms_mean"]:.3f}°)' if self.baseline else ''
         bss = f' (PID {_fmt(self.baseline.get("ss_mean"))}°)' if self.baseline else ''
+        bseg = f' | PID {_seg_text(self.baseline)}' if self.baseline else ''
         self._event(f'{"수동 " if manual else ""}평가 #{self.eval_rounds} (학습 {self.train_episodes} ep): '
-                    f'RMS {sc["rms_mean"]:.3f}°{base} {per}, 정상상태 |e| {_fmt(sc["ss_mean"])}°{bss} {pss}')
+                    f'RMS {sc["rms_mean"]:.3f}°{base} {per}, 정상상태 |e| {_fmt(sc["ss_mean"])}°{bss} {pss}, '
+                    f'{_seg_text(sc)}{bseg}')
         # 같은 정책(갱신 수가 같음)의 스냅샷에 평가 결과를 적고, 최고면 best 스냅샷
         self._last_eval = (self.sac.updates, sc['rms_mean'])
         self._annotate_snapshots(sc['rms_mean'])

@@ -5,11 +5,11 @@
 
 1. 프로토콜: bench_test 전 항목을 가짜 보드(가상시간)로
 2. SAC: 버퍼 저장/복원, numpy 추론 = torch 액터, 체크포인트 왕복, 추론 시간, 작은 문제 학습
-3. env: 합성 D 줄로 결정 위상·실제 증분·종단/절단
-4. 트레이너: 가상시간 짧은 학습이 실제로 나아지는지(첫 평가 대비 25%↓, PID보다 낮음), 일시정지/재개(사용자·고장 주입), --resume
+3. env: 합성 D 줄로 결정 위상·실제 증분·종단/절단, 고정 적분 보조(정책 0 이어도 오차 제거, 벌점은 정책 몫만)
+4. 트레이너: 가상시간 짧은 학습이 실제로 나아지는지(학습 return 개선, 마지막 평가 < PID), 일시정지/재개(사용자·고장 주입), --resume
 5. 스냅샷: 주기·best·수동(snapshot 명령, 일시정지 중 즉시), eval 명령(정기 일정과 별도), 옛 설정·체크포인트 호환
 6. rl.play: 가짜 보드로 --refs --pid / --hold, 지표·CSV·그림, STOP 으로 끝남, ABORT 중단
-7. 정상상태: steady_metrics, 정밀 보상·미세 오차 관측, 옛 실행 설정 호환(관측 7차원 유지), 주기 PID 기준선,
+7. 정상상태: steady_metrics(편향·리플·정착 시간·오버슈트), 정밀 보상·미세 오차 관측, 옛 실행 설정 호환(관측 7차원 유지), 주기 PID 기준선,
    train_log ss_* 열, 이어 하기 때 옛 머리줄 유지
 시험 실행 폴더는 임시 폴더에 만들고 지웁니다.
 """
@@ -115,6 +115,7 @@ def t_env():
     from .link import parse_line
     cfg = Config()
     cfg.env.act_pow = 1.0          # 이 시험은 선형 행동 곡선 기준 (a 0.5 → du 5)
+    cfg.env.ki_assist = 0.0        # 적분 보조 없이 (보조는 아래 t_env_ki)
     env = EpisodeEnv(cfg)
     env.arm(lambda o: 0.5, 2, 10)
     sent = []
@@ -143,6 +144,47 @@ def t_env():
     env.finish()
     check('DONE → 절단 (마지막 결정은 전이로 만들지 않음, done=0)', len(env.trans) == 2 and
           all(t[4] == 0.0 for t in env.trans))
+    t_env_ki()
+
+
+def _ki_loop(ki, secs=10.0, band=0.0):
+    """정책 출력 0, 합성 1차 플랜트(θ_ss = 0.15·(u − 40)°, τ 0.3 s), 기준 25°, 시작 u 170 (e ≈ 5.5°)."""
+    from .config import Config
+    from .env import EpisodeEnv
+    from .link import parse_line
+    cfg = Config()
+    cfg.env.ki_assist = ki
+    cfg.env.ki_band_deg = band
+    env = EpisodeEnv(cfg)
+    env.arm(lambda o: 0.0, 2, 10)
+    u, th, pend = 170, 0.15 * 130, 0
+    for n in range(int(secs / 0.01)):
+        u = max(40, min(255, u + pend))
+        pend = 0
+        th += (0.15 * (u - 40) - th) * (0.01 / 0.3)
+        cmd = env.on_D(parse_line(f'D,{10 * n},{u},{round(th * 100)},0,{round(th * 100)},1,2500,0'))
+        if cmd:
+            pend = int(cmd.split()[1])
+    env.finish()
+    return env, 25.0 - th, u
+
+
+def t_env_ki():
+    print('== 3b. env 고정 적분 보조 (합성 플랜트, 정책 출력 0)', flush=True)
+    env0, e0, u0 = _ki_loop(0.0)
+    env3, e3, u3 = _ki_loop(3.0)
+    check('k_I 0: 정책 0 이면 PWM 유지 → 오차 그대로', u0 == 170 and abs(e0 - 5.5) < 0.1, f'e {e0:.2f}°, u {u0}')
+    check('k_I 3: 정책 0 이어도 적분이 오차를 없앰 (10 s 뒤 |e| < 0.3°)', abs(e3) < 0.3 and u3 > 190,
+          f'e {e3:.2f}°, u {u3}')
+    th_s = env3.cfg.env.th_scale
+    a_ok = all(abs(t[1]) < 1e-9 for t in env3.trans)
+    r_ok = all(abs(t[2] - env3._reward(float(t[3][0]) * th_s, 0.0, 0.0)) < 1e-6 for t in env3.trans)
+    check('k_I 3: 리플레이 행동 = 정책 몫 0, 보상에 적분 증분 벌점 없음', a_ok and r_ok,
+          f'적분 증분 평균 {env3.summary()["mean_abs_di"]:.2f} PWM/결정')
+    _, eb, ub = _ki_loop(10.0, band=1.5)
+    _, en, un = _ki_loop(10.0)
+    check('적분 분리(폭 1.5°): 큰 오차(5.5°)에서는 적분 거의 0, 분리 없으면 k_I 10 이 오차 제거',
+          ub <= 171 and abs(eb - 5.5) < 0.2 and abs(en) < 0.3, f'분리 e {eb:.2f}° u {ub}, 분리 없음 e {en:.2f}° u {un}')
 
 
 def _virtual_trainer(tmp, name, episodes, overrides=None, resume_dir=None, seed=11):
@@ -249,10 +291,16 @@ def t_trainer(tmp, quick):
     s = tr.status()
     ev = [e['rms_mean'] for e in s['eval_scores']]
     base = s['baseline']['rms_mean'] if s['baseline'] else float('nan')
-    # 11-14: 기준 ≤ 30°·PWM 255·정밀 보상으로 첫 평가부터 낮아져(6.5 → 3.6°) 상대 감소 기준을 40 → 25% 로, PID 비교 추가
-    check('짧은 학습으로 평가 RMS 개선 (첫 평가 대비 25% 이상 감소, PID 기준선보다 낮음)',
-          len(ev) >= 3 and ev[-1] < 0.75 * ev[0] and ev[-1] < base,
-          f'평가 RMS {ev}, PID {base:.3f}°, 가상 {s["elapsed_s"] / 60:.1f} 분 / 실제 {(time.time() - t0) / 60:.1f} 분')
+    rets = [p['ret'] for p in s['learning_curve'] if p['kind'] == 'train']
+    r_first, r_last = float(np.mean(rets[:3])), float(np.mean(rets[-10:]))
+    # 학습이 되는지만 보는 연기 시험. 예전에는 "평가 RMS 가 첫 평가보다 x% 감소" 였는데, 기본값이 바뀔 때마다
+    # (기준 ≤ 30°, 적분 보조, 20 s 에피소드 — 긴 구간은 RMS 를 낮춤) 첫 평가 자체가 낮아져 비율이 흔들렸음.
+    # 지금: 무작위 워밍업 3 에피소드의 return 대비 마지막 10 에피소드 return 이 절반 이하(벌점), 마지막 평가 < PID.
+    # (11-15 이 시드: 새 기본값 −226 → −57, 평가 2.35 → 1.90° / PID 2.46°. k_I 3·10 s 는 −241 → −45, 2.78 / 3.59°)
+    check('짧은 학습: 학습 return 개선 (워밍업 대비 벌점 절반 이하), 마지막 평가 RMS < PID 기준선',
+          len(ev) >= 3 and len(rets) >= 13 and r_last > 0.5 * r_first and ev[-1] < base,
+          f'return {r_first:.0f} → {r_last:.0f}, 평가 RMS {ev}, PID {base:.3f}°, 가상 {s["elapsed_s"] / 60:.1f} 분 / '
+          f'실제 {(time.time() - t0) / 60:.1f} 분')
 
 
 def _wait(tr, cond, timeout=120):
@@ -410,10 +458,27 @@ def t_steady(tmp):
     from .trainer import steady_metrics
     rows = [[i * 10, 100 + (i % 2), 20.0 + (0.5 if i < 500 else -0.3), 0, 0, 1, 20.0] for i in range(1000)]
     m = steady_metrics(rows, 500, 150)
-    check('steady_metrics: 창 평균 e(부호), 평균 |e|, PWM σ', m == dict(ss_e1=-0.5, ss_e2=0.3, ss_abs=0.4, ss_pwm_sd=0.5),
-          str(m))
+    sub = {k: m[k] for k in ('ss_e1', 'ss_e2', 'ss_abs', 'ss_pwm_sd', 'ss_bias', 'ss_ripple')}
+    check('steady_metrics: 창 평균 e(부호), 평균 |e|, PWM σ, 편향 = |창 평균|, 리플 0',
+          sub == dict(ss_e1=-0.5, ss_e2=0.3, ss_abs=0.4, ss_pwm_sd=0.5, ss_bias=0.4, ss_ripple=0.0)
+          and m['settle_s'] is None, str(m))
     m2 = steady_metrics(rows[:300], 500, 150)
     check('steady_metrics: 스텝 전에 끝난 에피소드 → 창 1 만', m2['ss_e1'] == -0.5 and m2['ss_e2'] is None, str(m2))
+    # 1차 응답(τ 0.5 s)으로 20 → 25° → 22°, 끝 편향 0.3°, 리플 사인 0.1°: 정착·오버슈트·리플 분리
+    rows3, th = [], 20.0
+    for i in range(2000):
+        r_ = 25.0 if i < 1000 else 22.0
+        th += (r_ - 0.3 - th) * 0.02
+        rows3.append([i * 10, 150, th + 0.1 * math.sin(i * 0.5), 0, 0, 1, r_])
+    m3 = steady_metrics(rows3, 1000, 300)
+    check('steady_metrics: 정착 시간(±0.5°, 구간 안 이동평균)·오버슈트·편향/리플 분리',
+          abs(m3['settle1'] - 1.67) < 0.1 and abs(m3['settle2'] - 0.76) < 0.1 and m3['os1'] == 0.0
+          and abs(m3['os2'] - 13.3) < 0.5 and abs(m3['ss_bias'] - 0.3) < 0.01 and abs(m3['ss_ripple'] - 0.0707) < 0.005,
+          str(m3))
+    rows4 = [[x[0], x[1], x[2] - 1.0, 0, 0, 1, x[6]] for x in rows3]   # 편향 1.3° → 띠 밖 → 구간 길이(검열)
+    m4 = steady_metrics(rows4, 1000, 300)
+    check('steady_metrics: 끝까지 띠에 못 들어오면 정착 = 구간 길이', m4['settle1'] == 10.0 and m4['settle2'] == 10.0,
+          str({k: m4[k] for k in ('settle1', 'settle2', 'ss_bias')}))
     cfg = Config()
     env = EpisodeEnv(cfg)
     r = [env._reward(e, 0.0, 0.0) for e in (0.0, 0.2, 0.5, 1.0, 8.0)]
@@ -424,16 +489,18 @@ def t_steady(tmp):
           all(a > b for a, b in zip(r, r[1:])) and r[4] / r[2] < 20 and r0[1] / r0[0] > 50,
           f'새 {[round(x, 4) for x in r]}, 비 {r[4] / r[2]:.1f} (옛 {r0[1] / r0[0]:.1f})')
     d = to_dict(cfg)
-    for k in ('obs_efine', 'w_fine', 'efine_scale', 'fine_scale'):
+    for k in ('obs_efine', 'w_fine', 'efine_scale', 'fine_scale', 'ki_assist'):
         d['env'].pop(k)
     d['run'].pop('baseline_every')
     c_leg, c_new = from_dict(d, legacy=True), from_dict(d)
-    check('옛 실행 config(키 없음) → 관측 7차원·정밀 항 0·기준선 시작 때만, --config 는 새 기본값 8차원',
-          obs_dim(c_leg) == 7 and c_leg.env.w_fine == 0.0 and c_leg.run.baseline_every == 0 and obs_dim(c_new) == 8,
+    check('옛 실행 config(키 없음) → 관측 7차원·정밀 항 0·적분 보조 0·기준선 시작 때만, --config 는 새 기본값',
+          obs_dim(c_leg) == 7 and c_leg.env.w_fine == 0.0 and c_leg.env.ki_assist == 0.0
+          and c_leg.run.baseline_every == 0 and obs_dim(c_new) == 8 and c_new.env.ki_assist > 0,
           f'옛 {obs_dim(c_leg)}, 새 {obs_dim(c_new)}')
-    check('기본값: PWM 상한 255 (LIM = u_hi), 기준 ≤ 30°, 평가 기준 ≤ 30°',
+    check('기본값: PWM 상한 255 (LIM = u_hi), 기준 ≤ 30°, 평가 기준 ≤ 30°, 에피소드 20 s·창 3 s·k_I 6',
           cfg.lim.pwm_max == 255 and cfg.rl.u_hi == 255 and cfg.episode.ref_hi == 30.0
-          and max(max(x) for x in cfg.run.eval_refs) <= 30.0)
+          and max(max(x) for x in cfg.run.eval_refs) <= 30.0 and cfg.episode.dur_s == 20.0
+          and cfg.run.ss_win_s == 3.0 and cfg.env.ki_assist == 6.0 and cfg.env.ki_band_deg == 0.0)
     # 주기 기준선 + ss 기록
     tr, board, rd = _virtual_trainer(tmp, 'steady', 5, {'sac.warmup_steps': 500, 'run.eval_every': 2,
                                                         'run.baseline_every': 2}, seed=31)
@@ -443,19 +510,25 @@ def t_steady(tmp):
     bh = s['baseline_history']
     check('주기 PID 기준선: 시작 + 정기 평가 2회마다 (ep 0, 4)', [b['episode'] for b in bh] == [0, 4]
           and s['baseline'] == bh[-1] and all(b['ss_mean'] is not None for b in bh), str([b['episode'] for b in bh]))
-    check('평가 점수에 정상상태 |e| (ss_mean, ss_per_scenario)', s['eval_scores'] and all(
-        e['ss_mean'] is not None and len(e['ss_per_scenario']) == 3 for e in s['eval_scores']),
-          str([e.get('ss_mean') for e in s['eval_scores']]))
+    check('평가 점수에 정상상태 |e|·편향·리플·정착·OS', s['eval_scores'] and all(
+        e['ss_mean'] is not None and len(e['ss_per_scenario']) == 3 and e['bias_mean'] is not None
+        and e['ripple_mean'] is not None and e['settle_mean'] is not None and e['os_mean'] is not None
+        for e in s['eval_scores']) and all(b['bias_mean'] is not None and b['settle_mean'] is not None for b in bh),
+          str([(e.get('bias_mean'), e.get('settle_mean')) for e in s['eval_scores']]))
     with open(os.path.join(rd, 'train_log.csv'), encoding='utf-8') as f:
         lr = list(csv.DictReader(f))
-    check('train_log 에 ss_e1·ss_e2·ss_abs·ss_pwm_sd (모든 줄)', lr and all(x['ss_abs'] != '' for x in lr)
+    check('train_log 에 ss_*·편향·리플·정착·OS (모든 줄)', lr and all(x['ss_abs'] != '' and x['ss_bias'] != ''
+                                                          and x['settle_s'] != '' for x in lr)
           and list(lr[0].keys()) == LOG_FIELDS, f'{len(lr)} 줄')
-    check('학습 곡선에 ss_abs', any(p.get('ss_abs') is not None for p in s['learning_curve']))
+    check('학습 곡선에 ss_abs·ss_bias·settle_s', any(p.get('ss_abs') is not None and p.get('ss_bias') is not None
+                                                and p.get('settle_s') is not None for p in s['learning_curve']))
+    s_json = __import__('json').dumps(s)   # numpy 값이 섞이면 실패
+    check('status() JSON 직렬화 (새 지표 포함)', len(s_json) > 0)
     tr.rec.close()
     # 이어 하기: 옛 머리줄(ss 열 없음)이면 그 열 그대로
     od = os.path.join(tmp, 'oldlog')
     os.makedirs(od, exist_ok=True)
-    old_fields = LOG_FIELDS[:-4]
+    old_fields = LOG_FIELDS[:-9]
     with open(os.path.join(od, 'train_log.csv'), 'w', encoding='utf-8', newline='') as f:
         csv.writer(f).writerow(old_fields)
     rec = Recorder(od)

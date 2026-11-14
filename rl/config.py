@@ -103,7 +103,8 @@ class SafeCfg:
 
 @dataclass
 class EpisodeCfg:
-    dur_s: float = 10.0             # 에피소드 길이
+    dur_s: float = 20.0             # 에피소드 길이 (11-15: 10 → 20 s. 구간 7–13 s 라 느린 경로 Tc 6 s 까지 담기고
+                                    # 샘플의 ~80% 가 정상상태 근처 → 보상이 과도 응답에 덜 치우침)
     ref_lo: float = 15.0            # 기준 범위 [deg]                                 [재식별]
     ref_hi: float = 30.0            # 11-14 rl1 (35°) 은 31° 이상에서 포화·정착 실패가 잦았음
     home_deg: float | None = None   # None = 에피소드마다 기준 범위에서 무작위
@@ -141,6 +142,14 @@ class EnvCfg:
     act_pow: float = 2.0            # 행동 곡선 du = du_max·sign(a)|a|^p (p > 1 이면 0 근처 해상도↑)
     obs_efine: bool = True           # 관측에 미세 오차 tanh(e/efine_scale) 추가 (e/th_scale 만으로는 0.5° 가 0.05)
     efine_scale: float = 0.5         # [deg]
+    ki_assist: float = 6.0           # 고정 적분 보조 k_I [PWM/(°·s)] (보드 PID ki 와 같은 단위, 0 = 끔): du += k_I·dt·e.
+    # 정책 출력 0 이 "유지"가 아니라 "오차 적분"이 되게 함 (rl3: 과열로 이득이 변하자 e ≈ 1.4° 에서 du ≈ 0 으로 멈춤).
+    # 평형 편향 e* = −(정책 몫)/(k_I·dt): 11-15 rl1(k_I 3)은 정책 출력의 영점 오프셋 −0.06 PWM/결정 때문에 e* ≈ 1°,
+    # 6 이면 같은 오프셋에 ≈ 0.5°. 크게 할수록 과도 구간에 쌓여 오버슈트↑ (가짜 보드 공칭, 20 s, 2 시드 60 ep:
+    # k_I 3 / 6 / 10 → 편향 0.31 / 0.25 / 0.21°, OS 7.9 / 5.9 / 13.9%, 정착 4.1 / 3.5 / 4.0 s; PID 0.19° · 5.9% · 2.3 s)
+    ki_band_deg: float = 0.0         # 적분 분리 폭 [deg]: x_I 에 exp(−(e/폭)²) 를 곱해 기준 근처에서만 적분 (0 = 끔).
+    # 속도형이라도 과도 구간 동안 쌓이는 양은 큼: k_I 10, 10° 스텝 상승 ~1 s (∫e ≈ 3 °·s) → 30 PWM ≈ 4° 오버슈트.
+    # 가짜 보드에서 k_I 10 + 폭 1.5/3° 는 OS 는 10% 로 줄었지만 편향 0.29–0.31° 로 이점이 사라져 기본은 끔
 
 
 @dataclass
@@ -191,7 +200,8 @@ class RunCfg:
     eval_every: int = 10           # 학습 에피소드 N 개마다 평가
     eval_refs: list = field(default_factory=lambda: [[20.0, 30.0, 22.0], [30.0, 18.0, 28.0], [25.0, 30.0, 16.0]])
     # 평가 시나리오 [home, r1, r2]: r1 은 시작부터, r2 는 에피소드 절반에서
-    ss_win_s: float = 1.5          # 정상상태 지표 창: 각 기준 구간(스텝 전·에피소드 끝)의 마지막 이 시간
+    ss_win_s: float = 3.0          # 정상상태 지표 창: 각 기준 구간(스텝 전·에피소드 끝)의 마지막 이 시간
+    settle_band_deg: float = 0.5   # 정착 시간 판정 띠 |e| (0.2 s 이동평균, 진동·잡음 제거)
     baseline_every: int = 5        # 정기 평가 N 회마다 PID 기준선 다시 (플랜트가 세션 중 흘러감). 0 = 시작 때만
     checkpoint_every: int = 10     # 에피소드마다
     snapshot_every: int = 50       # 학습 에피소드 N 개마다 정책 스냅샷 checkpoints/epNNNNN/ (0 = 끔). 옛 config.json 에 없으면 이 값
@@ -239,7 +249,7 @@ def _merge(obj: Any, d: dict, path: str):
 # 실행 폴더의 config.json(전체 설정을 저장)에 이 키가 없으면 그 실행은 이 기능 전에 시작한 것 →
 # 새 기본값 대신 옛 동작 값을 씀 (관측 차원·보상이 바뀌면 옛 체크포인트를 이어 하거나 정책을 시험할 수 없음)
 LEGACY_DEFAULTS = {
-    'env': {'obs_efine': False, 'w_fine': 0.0},
+    'env': {'obs_efine': False, 'w_fine': 0.0, 'ki_assist': 0.0},
     'run': {'baseline_every': 0},
 }
 

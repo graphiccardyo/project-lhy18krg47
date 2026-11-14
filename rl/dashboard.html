@@ -153,13 +153,15 @@ pre#log { margin: 0; max-height: 260px; overflow: auto; background: var(--bg); b
       </div>
     </div>
     <div class="panel">
-      <h2>정상상태 |e| [°] — 스텝 직전·끝 1.5 s 평균</h2>
+      <h2>정상상태 편향 |창 평균 e| [°] — 각 구간 마지막 창</h2>
       <canvas id="g4"></canvas>
       <div class="legend">
         <span><i style="background:var(--c-train);height:8px;width:8px;border-radius:50%"></i>학습 에피소드</span>
-        <span><i style="background:var(--c-eval)"></i>평가 평균</span>
-        <span><i style="background:var(--c-base)"></i>PID 기준선 (회색 점·점선 = 최근)</span>
+        <span><i style="background:var(--c-eval)"></i>평가 편향</span>
+        <span><i style="background:var(--c-eval);opacity:.5"></i>평가 리플 σ(e) (점선)</span>
+        <span><i style="background:var(--c-base)"></i>PID 편향 (회색 점·점선 = 최근)</span>
       </div>
+      <div id="g4-note" class="small muted" style="margin-top:4px">&nbsp;</div>
     </div>
     <div class="panel">
       <h2>에피소드별 평균 PWM — 같은 각도 유지에 드는 PWM 추이</h2>
@@ -523,28 +525,40 @@ pre#log { margin: 0; max-height: 260px; overflow: auto; background: var(--bg); b
     dots(g.ctx, ev.map(function (p) { return [m.x(p.episode), m.y(p.mean_pwm)]; }), cssVar('--c-eval', '#8250df'), 3.2);
   }
 
-  // 그래프 4: 정상상태 |e| (학습 점, 평가 평균 선, PID 기준선 이력 점 + 최근 점선)
+  // 그래프 4: 정상상태 편향 (학습 점, 평가 편향 선 + 리플 점선, PID 편향 이력 점 + 최근 점선).
+  // 편향 필드가 없는 옛 실행은 평균 |e| (ss_abs / ss_mean) 로 대신 그림
+  function biasOf(p, kTrain) {
+    if (!p) return null;
+    if (kTrain) return isNum(p.ss_bias) ? p.ss_bias : (isNum(p.ss_abs) ? p.ss_abs : null);
+    return isNum(p.bias_mean) ? p.bias_mean : (isNum(p.ss_mean) ? p.ss_mean : null);
+  }
   function drawG4(s) {
     var cv = $('g4'), g = setupCanvas(cv);
     var train = arr(s && s.learning_curve).filter(function (p) {
-      return p && p.kind === 'train' && isNum(p.ss_abs) && isNum(p.episode);
-    });
-    var evp = arr(s && s.eval_scores).filter(function (p) { return p && isNum(p.ss_mean) && isNum(p.episode); });
-    var bh = arr(s && s.baseline_history).filter(function (p) { return p && isNum(p.ss_mean) && isNum(p.episode); });
-    var base = s && s.baseline && isNum(s.baseline.ss_mean) ? s.baseline.ss_mean : null;
+      return p && p.kind === 'train' && isNum(biasOf(p, true)) && isNum(p.episode);
+    }).map(function (p) { return { episode: p.episode, v: biasOf(p, true) }; });
+    var evp = arr(s && s.eval_scores).filter(function (p) { return p && isNum(biasOf(p)) && isNum(p.episode); })
+      .map(function (p) { return { episode: p.episode, v: biasOf(p), rip: p.ripple_mean, st: p.settle_mean, os: p.os_mean }; });
+    var bh = arr(s && s.baseline_history).filter(function (p) { return p && isNum(biasOf(p)) && isNum(p.episode); })
+      .map(function (p) { return { episode: p.episode, v: biasOf(p) }; });
+    var base = s && s.baseline && isNum(biasOf(s.baseline)) ? biasOf(s.baseline) : null;
+    var lastE = evp.length ? evp[evp.length - 1] : null, b0 = s && s.baseline;
+    setText('g4-note', lastE ? ('최근 평가: 편향 ' + fmt(lastE.v, 2) + '°, 리플 ' + fmt(lastE.rip, 2) + '°, 정착 ' +
+      fmt(lastE.st, 2) + ' s, OS ' + fmt(lastE.os, 1) + '%' + (b0 ? ('  |  PID: 편향 ' + fmt(biasOf(b0), 2) + '°, 리플 ' +
+      fmt(b0.ripple_mean, 2) + '°, 정착 ' + fmt(b0.settle_mean, 2) + ' s, OS ' + fmt(b0.os_mean, 1) + '%') : '')) : '\u00a0');
     if (!train.length && !evp.length && base === null) { emptyMsg(g, '아직 데이터 없음 (새 실행부터 기록)'); return; }
     var xs = [], ys = [];
-    train.forEach(function (p) { xs.push(p.episode); ys.push(p.ss_abs); });
-    evp.forEach(function (p) { xs.push(p.episode); ys.push(p.ss_mean); });
-    bh.forEach(function (p) { xs.push(p.episode); ys.push(p.ss_mean); });
+    train.forEach(function (p) { xs.push(p.episode); ys.push(p.v); });
+    evp.forEach(function (p) { xs.push(p.episode); ys.push(p.v); if (isNum(p.rip)) ys.push(p.rip); });
+    bh.forEach(function (p) { xs.push(p.episode); ys.push(p.v); });
     if (base !== null) ys.push(base);
     var xlo = xs.length ? Math.min.apply(null, xs) : 0, xhi = xs.length ? Math.max.apply(null, xs) : 1;
     if (xhi - xlo < 1) xhi = xlo + 1;
     // 학습 점은 가끔 크게 튀므로(케이블 충격·정착 실패) 위쪽은 평가·기준선과 학습 점 90 백분위로 자름
-    var ts = train.map(function (p) { return p.ss_abs; }).sort(function (a, b) { return a - b; });
+    var ts = train.map(function (p) { return p.v; }).sort(function (a, b) { return a - b; });
     var top = ts.length ? ts[Math.floor(0.9 * (ts.length - 1))] : 0;
-    evp.forEach(function (p) { top = Math.max(top, p.ss_mean); });
-    bh.forEach(function (p) { top = Math.max(top, p.ss_mean); });
+    evp.forEach(function (p) { top = Math.max(top, p.v); if (isNum(p.rip)) top = Math.max(top, p.rip); });
+    bh.forEach(function (p) { top = Math.max(top, p.v); });
     if (base !== null) top = Math.max(top, base);
     var yr = niceRange(0, top || 1);
     var L = { left: 44, right: 12, top: 8, bottom: 22, xr: [xlo, xhi], yr: yr, xlabel: '학습 에피소드', xdigits: 0 };
@@ -554,9 +568,11 @@ pre#log { margin: 0; max-height: 260px; overflow: auto; background: var(--bg); b
     if (base !== null) {
       polyline(ctx, [[L.left, m.y(base)], [g.w - L.right, m.y(base)]], cssVar('--c-base', '#6b7385'), [6, 4], 1.6);
     }
-    dots(ctx, bh.map(function (p) { return [m.x(p.episode), cy(p.ss_mean)]; }), cssVar('--c-base', '#6b7385'), 3.5);
-    dots(ctx, train.map(function (p) { return [m.x(p.episode), cy(p.ss_abs)]; }), cssVar('--c-train', '#2da44e'), 2.6);
-    var pe = evp.map(function (p) { return [m.x(p.episode), cy(p.ss_mean)]; });
+    dots(ctx, bh.map(function (p) { return [m.x(p.episode), cy(p.v)]; }), cssVar('--c-base', '#6b7385'), 3.5);
+    dots(ctx, train.map(function (p) { return [m.x(p.episode), cy(p.v)]; }), cssVar('--c-train', '#2da44e'), 2.6);
+    var pr = evp.filter(function (p) { return isNum(p.rip); }).map(function (p) { return [m.x(p.episode), cy(p.rip)]; });
+    polyline(ctx, pr, cssVar('--c-eval', '#8250df'), [3, 3], 1.2);
+    var pe = evp.map(function (p) { return [m.x(p.episode), cy(p.v)]; });
     polyline(ctx, pe, cssVar('--c-eval', '#8250df'), [], 2.2);
     dots(ctx, pe, cssVar('--c-eval', '#8250df'), 3);
   }
