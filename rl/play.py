@@ -34,7 +34,7 @@ import traceback
 
 import numpy as np
 
-from .config import load_config
+from .config import load_run_config
 from .link import LinkError
 from .trainer import Pause, StopRun, Trainer
 
@@ -146,8 +146,8 @@ class Player(Trainer):
         self.end_reason = None
         self._rep = 0
 
-    def _finish_episode(self, kind, scenario, status, rows, summ, home, r1, r2, step_s, extra_rms=None):
-        super()._finish_episode(kind, scenario, status, rows, summ, home, r1, r2, step_s, extra_rms)
+    def _finish_episode(self, kind, scenario, status, rows, summ, home, r1, r2, step_s, extra_rms=None, ss=None):
+        super()._finish_episode(kind, scenario, status, rows, summ, home, r1, r2, step_s, extra_rms, ss)
         m = episode_metrics(rows, home, self.ts, self.settle_s)
         self.results.append(dict(run=self._rep, kind='rl' if kind == 'play' else kind, scenario=int(scenario),
                                  status=status, home=home, r1=r1, r2=r2, miss=summ['miss'],
@@ -337,7 +337,7 @@ def main(argv=None):
         ap.error('--repeat ≥ 1, --dur > 0')
 
     pol, run_dir, meta = resolve_policy(args.ckpt, args.snapshot)
-    cfg = load_config(os.path.join(run_dir, 'config.json'))
+    cfg = load_run_config(os.path.join(run_dir, 'config.json'))
     cfg.episode.dur_s = float(args.dur)
     cfg.run.save_episode_csv = True
     if args.bench:

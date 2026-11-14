@@ -77,7 +77,7 @@ class PidCfg:
 
 @dataclass
 class LimCfg:
-    pwm_max: int = 210
+    pwm_max: int = 255        # PID 시험과 같은 상한 (11-14 rl1 은 210 이라 33° 에서 포화)
     angle_cdeg: int = 10000   # 각도 한계 100°
     rev: int = 0
 
@@ -90,7 +90,7 @@ class RLBoardCfg:
     # 보드 재부팅 기본값은 lag=1 이므로 학습기는 항상 RL 명령으로 명시 설정
     du_max: int = 10   # 한 번에 바꿀 수 있는 최대 PWM (최대 변화율 500 PWM/s)
     u_lo: int = 40     # 정책 PWM 범위 (모터 정지 방지 umin 과 같게)
-    u_hi: int = 210    # = LIM 최대 PWM
+    u_hi: int = 255    # = LIM 최대 PWM
 
 
 @dataclass
@@ -105,7 +105,7 @@ class SafeCfg:
 class EpisodeCfg:
     dur_s: float = 10.0             # 에피소드 길이
     ref_lo: float = 15.0            # 기준 범위 [deg]                                 [재식별]
-    ref_hi: float = 35.0
+    ref_hi: float = 30.0            # 11-14 rl1 (35°) 은 31° 이상에서 포화·정착 실패가 잦았음
     home_deg: float | None = None   # None = 에피소드마다 기준 범위에서 무작위
     step_frac: list = field(default_factory=lambda: [0.35, 0.65])  # 중간 기준 스텝 시각 (에피소드 비율)
     min_step_deg: float = 4.0       # 기준 변경 최소 크기 (home→r, r→r2)
@@ -128,7 +128,9 @@ class EnvCfg:
     err_cap: float = 16.0
     w_abs: float = 1.0          # |e|/err_scale 항 (정상상태 정밀도용, 제곱만 쓰면 작은 오차의 기울기가 0)
     w_du: float = 0.05          # 행동(PWM 변화) 벌점: w_du·(du/du_max)²
-    w_ddu: float = 0.02         # 행동 변화 벌점: w_ddu·((du−du_prev)/du_max)²
+    w_ddu: float = 0.1          # 행동 변화 벌점: w_ddu·((du−du_prev)/du_max)² (rl1 0.02 → 정착 구간 du ±3–4 떨림)
+    w_fine: float = 2.0         # 정밀 항: w_fine·(1 − exp(−(e/fine_scale)²)) — 작은 오차(0.2–1°)에서 기울기가 큼
+    fine_scale: float = 0.5     # [deg]
     fallback_penalty: float = 30.0   # FALLBACK 종단 벌점
     abort_penalty: float = 60.0      # ABORT 종단 벌점
     reward_scale: float = 0.03       # 전체 보상 배율 (Q 크기 조절)
@@ -137,6 +139,8 @@ class EnvCfg:
     eint_tau_s: float = 3.0
     eint_scale: float = 2.0          # [deg]
     act_pow: float = 2.0            # 행동 곡선 du = du_max·sign(a)|a|^p (p > 1 이면 0 근처 해상도↑)
+    obs_efine: bool = True           # 관측에 미세 오차 tanh(e/efine_scale) 추가 (e/th_scale 만으로는 0.5° 가 0.05)
+    efine_scale: float = 0.5         # [deg]
 
 
 @dataclass
@@ -185,8 +189,10 @@ class StopCfg:
 @dataclass
 class RunCfg:
     eval_every: int = 10           # 학습 에피소드 N 개마다 평가
-    eval_refs: list = field(default_factory=lambda: [[20.0, 30.0, 22.0], [30.0, 18.0, 28.0], [25.0, 33.0, 16.0]])
+    eval_refs: list = field(default_factory=lambda: [[20.0, 30.0, 22.0], [30.0, 18.0, 28.0], [25.0, 30.0, 16.0]])
     # 평가 시나리오 [home, r1, r2]: r1 은 시작부터, r2 는 에피소드 절반에서
+    ss_win_s: float = 1.5          # 정상상태 지표 창: 각 기준 구간(스텝 전·에피소드 끝)의 마지막 이 시간
+    baseline_every: int = 5        # 정기 평가 N 회마다 PID 기준선 다시 (플랜트가 세션 중 흘러감). 0 = 시작 때만
     checkpoint_every: int = 10     # 에피소드마다
     snapshot_every: int = 50       # 학습 에피소드 N 개마다 정책 스냅샷 checkpoints/epNNNNN/ (0 = 끔). 옛 config.json 에 없으면 이 값
     baseline_at_start: bool = True
@@ -230,17 +236,40 @@ def _merge(obj: Any, d: dict, path: str):
             setattr(obj, k, v)
 
 
-def from_dict(d: dict) -> Config:
+# 실행 폴더의 config.json(전체 설정을 저장)에 이 키가 없으면 그 실행은 이 기능 전에 시작한 것 →
+# 새 기본값 대신 옛 동작 값을 씀 (관측 차원·보상이 바뀌면 옛 체크포인트를 이어 하거나 정책을 시험할 수 없음)
+LEGACY_DEFAULTS = {
+    'env': {'obs_efine': False, 'w_fine': 0.0},
+    'run': {'baseline_every': 0},
+}
+
+
+def from_dict(d: dict, legacy: bool = False) -> Config:
+    """legacy=True: 실행 폴더 config.json 읽기 — 없는 키 중 LEGACY_DEFAULTS 에 있는 것은 옛 동작 값."""
     cfg = Config()
-    _merge(cfg, d or {}, '')
+    d = d or {}
+    if legacy:
+        for sec, kv in LEGACY_DEFAULTS.items():
+            have = d.get(sec, {})
+            for k, v in kv.items():
+                if k not in have:
+                    setattr(getattr(cfg, sec), k, v)
+    _merge(cfg, d, '')
     return cfg
 
 
 def load_config(path: str | None) -> Config:
+    """--config 용 (바꿀 항목만 적은 JSON, 나머지는 현재 기본값)."""
     if not path:
         return Config()
     with open(path, encoding='utf-8') as f:
         return from_dict(json.load(f))
+
+
+def load_run_config(path: str) -> Config:
+    """실행 폴더의 config.json (--resume, rl.play). 옛 실행은 LEGACY_DEFAULTS 로 옛 동작 유지."""
+    with open(path, encoding='utf-8') as f:
+        return from_dict(json.load(f), legacy=True)
 
 
 def save_config(cfg: Config, path: str):

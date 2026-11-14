@@ -12,10 +12,14 @@ lag ≤ dec 이므로 다음 결정 샘플 D 줄의 pwm 에는 a_k 가 이미 �
 마르코프성: 지연(지연 21 ms + lag) 때문에 θ 만으로는 상태가 모자라서 관측에 현재 PWM 과 직전 행동,
 걸러진 각속도, 직전 결정 이후 각 변화를 넣습니다.
 
-    o = [ (r−θ)/s_θ, (θ−θc)/s_θ, ω_f/s_ω, Δθ/1°, (u−uc)/s_u, a_prev, ē/s_ē ]   (ē = 오차의 3 s 느린 평균, obs_eint)
+    o = [ (r−θ)/s_θ, (θ−θc)/s_θ, ω_f/s_ω, Δθ/1°, (u−uc)/s_u, a_prev, ē/s_ē, tanh(e/s_f) ]
+        ē = 오차의 3 s 느린 평균 (obs_eint), tanh(e/s_f) = 미세 오차 (obs_efine, s_f 0.5°: 첫 항만으로는 0.5° 가 0.05)
 
 보상 (전이 k→k+1, 오차는 k+1 의 것):
-    r = scale · ( −min((e/s_e)², cap) − w_abs·min(|e|/s_e, cap) − w_du·a² − w_ddu·(a − a_prev)² )
+    r = scale · ( −min((e/s_e)², cap) − w_abs·min(|e|/s_e, cap) − w_fine·(1 − exp(−(e/s_p)²))
+                  − w_du·a² − w_ddu·(a − a_prev)² )
+    정밀 항(w_fine, s_p 0.5°)은 0.2–1° 에서 기울기가 커서 작은 정상상태 오차를 과도 응답 벌점에 묻히지 않게 합니다
+    (11-14 rl1: 0.5° 의 벌점이 스텝 직후 8° 의 1/60 이라 정상상태 개선 신호가 Q 오차에 묻힘).
 FALLBACK/ABORT 는 종단(done=1, 벌점), 시간 만료(DONE)는 절단(마지막 전이를 버리고 부트스트랩 유지).
 
 이 클래스의 on_D 는 link.fast_path 로 읽기 스레드에서 불립니다(가볍게 유지).
@@ -28,12 +32,12 @@ import numpy as np
 
 from .config import Config
 
-OBS_DIM = 6      # 기본 관측 차원 (obs_eint 면 +1) — obs_dim(cfg) 를 쓰세요
+OBS_DIM = 6      # 기본 관측 차원 (obs_eint, obs_efine 마다 +1) — obs_dim(cfg) 를 쓰세요
 ACT_DIM = 1
 
 
 def obs_dim(cfg: Config) -> int:
-    return OBS_DIM + (1 if cfg.env.obs_eint else 0)
+    return OBS_DIM + (1 if cfg.env.obs_eint else 0) + (1 if cfg.env.obs_efine else 0)
 
 
 class EpisodeEnv:
@@ -83,6 +87,8 @@ class EpisodeEnv:
         c = self.cfg.env
         x = abs(e_deg) / c.err_scale
         r = -min(x * x, c.err_cap) - c.w_abs * min(x, c.err_cap) - c.w_du * a * a - c.w_ddu * (a - a_prev) ** 2
+        if c.w_fine:
+            r -= c.w_fine * (1.0 - math.exp(-(e_deg / c.fine_scale) ** 2))
         return c.reward_scale * r
 
     def on_D(self, msg):
@@ -131,6 +137,8 @@ class EpisodeEnv:
               (u - c.u_center) / c.u_scale, a_store]
         if c.obs_eint:
             ov.append(self.ei / c.eint_scale)
+        if c.obs_efine:
+            ov.append(math.tanh(e_deg / c.efine_scale))
         o = np.array(ov, dtype=np.float32)
         info = {'n': n, 'o': o}
         if self.prev_o is not None:

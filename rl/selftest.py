@@ -6,9 +6,11 @@
 1. 프로토콜: bench_test 전 항목을 가짜 보드(가상시간)로
 2. SAC: 버퍼 저장/복원, numpy 추론 = torch 액터, 체크포인트 왕복, 추론 시간, 작은 문제 학습
 3. env: 합성 D 줄로 결정 위상·실제 증분·종단/절단
-4. 트레이너: 가상시간 짧은 학습이 실제로 나아지는지, 일시정지/재개(사용자·고장 주입), --resume
+4. 트레이너: 가상시간 짧은 학습이 실제로 나아지는지(첫 평가 대비 25%↓, PID보다 낮음), 일시정지/재개(사용자·고장 주입), --resume
 5. 스냅샷: 주기·best·수동(snapshot 명령, 일시정지 중 즉시), eval 명령(정기 일정과 별도), 옛 설정·체크포인트 호환
 6. rl.play: 가짜 보드로 --refs --pid / --hold, 지표·CSV·그림, STOP 으로 끝남, ABORT 중단
+7. 정상상태: steady_metrics, 정밀 보상·미세 오차 관측, 옛 실행 설정 호환(관측 7차원 유지), 주기 PID 기준선,
+   train_log ss_* 열, 이어 하기 때 옛 머리줄 유지
 시험 실행 폴더는 임시 폴더에 만들고 지웁니다.
 """
 from __future__ import annotations
@@ -234,6 +236,7 @@ def t_trainer(tmp, quick):
 
     t_snapshots(tmp)
     t_play(tmp)
+    t_steady(tmp)
 
     if quick:
         return
@@ -246,7 +249,9 @@ def t_trainer(tmp, quick):
     s = tr.status()
     ev = [e['rms_mean'] for e in s['eval_scores']]
     base = s['baseline']['rms_mean'] if s['baseline'] else float('nan')
-    check('짧은 학습으로 평가 RMS 개선 (첫 평가 대비 40% 이상 감소)', len(ev) >= 3 and ev[-1] < 0.6 * ev[0],
+    # 11-14: 기준 ≤ 30°·PWM 255·정밀 보상으로 첫 평가부터 낮아져(6.5 → 3.6°) 상대 감소 기준을 40 → 25% 로, PID 비교 추가
+    check('짧은 학습으로 평가 RMS 개선 (첫 평가 대비 25% 이상 감소, PID 기준선보다 낮음)',
+          len(ev) >= 3 and ev[-1] < 0.75 * ev[0] and ev[-1] < base,
           f'평가 RMS {ev}, PID {base:.3f}°, 가상 {s["elapsed_s"] / 60:.1f} 분 / 실제 {(time.time() - t0) / 60:.1f} 분')
 
 
@@ -394,6 +399,72 @@ def t_play(tmp):
     pl2.wait(120)
     check('play 중 EVT ABORT → 중단·STOP·모터 0', pl2.end_reason is not None and 'ABORT' in pl2.end_reason
           and board2.u_out == 0, pl2.end_reason)
+
+
+def t_steady(tmp):
+    print('== 7. 정상상태 지표·보상·호환 (가상시간)', flush=True)
+    import csv
+    from .config import Config, from_dict, to_dict
+    from .env import EpisodeEnv, obs_dim
+    from .record import LOG_FIELDS, Recorder
+    from .trainer import steady_metrics
+    rows = [[i * 10, 100 + (i % 2), 20.0 + (0.5 if i < 500 else -0.3), 0, 0, 1, 20.0] for i in range(1000)]
+    m = steady_metrics(rows, 500, 150)
+    check('steady_metrics: 창 평균 e(부호), 평균 |e|, PWM σ', m == dict(ss_e1=-0.5, ss_e2=0.3, ss_abs=0.4, ss_pwm_sd=0.5),
+          str(m))
+    m2 = steady_metrics(rows[:300], 500, 150)
+    check('steady_metrics: 스텝 전에 끝난 에피소드 → 창 1 만', m2['ss_e1'] == -0.5 and m2['ss_e2'] is None, str(m2))
+    cfg = Config()
+    env = EpisodeEnv(cfg)
+    r = [env._reward(e, 0.0, 0.0) for e in (0.0, 0.2, 0.5, 1.0, 8.0)]
+    old = Config()
+    old.env.w_fine = 0.0
+    r0 = [EpisodeEnv(old)._reward(e, 0.0, 0.0) for e in (0.5, 8.0)]
+    check('정밀 보상: 단조 감소, 0.5° 벌점 비중 ↑ (8°/0.5° 비 < 20, 옛 보상은 > 50)',
+          all(a > b for a, b in zip(r, r[1:])) and r[4] / r[2] < 20 and r0[1] / r0[0] > 50,
+          f'새 {[round(x, 4) for x in r]}, 비 {r[4] / r[2]:.1f} (옛 {r0[1] / r0[0]:.1f})')
+    d = to_dict(cfg)
+    for k in ('obs_efine', 'w_fine', 'efine_scale', 'fine_scale'):
+        d['env'].pop(k)
+    d['run'].pop('baseline_every')
+    c_leg, c_new = from_dict(d, legacy=True), from_dict(d)
+    check('옛 실행 config(키 없음) → 관측 7차원·정밀 항 0·기준선 시작 때만, --config 는 새 기본값 8차원',
+          obs_dim(c_leg) == 7 and c_leg.env.w_fine == 0.0 and c_leg.run.baseline_every == 0 and obs_dim(c_new) == 8,
+          f'옛 {obs_dim(c_leg)}, 새 {obs_dim(c_new)}')
+    check('기본값: PWM 상한 255 (LIM = u_hi), 기준 ≤ 30°, 평가 기준 ≤ 30°',
+          cfg.lim.pwm_max == 255 and cfg.rl.u_hi == 255 and cfg.episode.ref_hi == 30.0
+          and max(max(x) for x in cfg.run.eval_refs) <= 30.0)
+    # 주기 기준선 + ss 기록
+    tr, board, rd = _virtual_trainer(tmp, 'steady', 5, {'sac.warmup_steps': 500, 'run.eval_every': 2,
+                                                        'run.baseline_every': 2}, seed=31)
+    tr.start()
+    tr.wait(600)
+    s = tr.status()
+    bh = s['baseline_history']
+    check('주기 PID 기준선: 시작 + 정기 평가 2회마다 (ep 0, 4)', [b['episode'] for b in bh] == [0, 4]
+          and s['baseline'] == bh[-1] and all(b['ss_mean'] is not None for b in bh), str([b['episode'] for b in bh]))
+    check('평가 점수에 정상상태 |e| (ss_mean, ss_per_scenario)', s['eval_scores'] and all(
+        e['ss_mean'] is not None and len(e['ss_per_scenario']) == 3 for e in s['eval_scores']),
+          str([e.get('ss_mean') for e in s['eval_scores']]))
+    with open(os.path.join(rd, 'train_log.csv'), encoding='utf-8') as f:
+        lr = list(csv.DictReader(f))
+    check('train_log 에 ss_e1·ss_e2·ss_abs·ss_pwm_sd (모든 줄)', lr and all(x['ss_abs'] != '' for x in lr)
+          and list(lr[0].keys()) == LOG_FIELDS, f'{len(lr)} 줄')
+    check('학습 곡선에 ss_abs', any(p.get('ss_abs') is not None for p in s['learning_curve']))
+    tr.rec.close()
+    # 이어 하기: 옛 머리줄(ss 열 없음)이면 그 열 그대로
+    od = os.path.join(tmp, 'oldlog')
+    os.makedirs(od, exist_ok=True)
+    old_fields = LOG_FIELDS[:-4]
+    with open(os.path.join(od, 'train_log.csv'), 'w', encoding='utf-8', newline='') as f:
+        csv.writer(f).writerow(old_fields)
+    rec = Recorder(od)
+    rec.log_row({k: 1 for k in LOG_FIELDS})
+    rec.close()
+    with open(os.path.join(od, 'train_log.csv'), encoding='utf-8') as f:
+        lines = list(csv.reader(f))
+    check('이어 하기: 옛 train_log 머리줄 유지 (열 수 일치)', len(lines) == 2 and len(lines[1]) == len(old_fields),
+          f'머리 {len(lines[0])}열, 줄 {len(lines[1])}열')
 
 
 def main(argv=None):

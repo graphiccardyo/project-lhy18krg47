@@ -18,7 +18,7 @@ import sys
 import threading
 import time
 
-from .config import load_config
+from .config import load_config, load_run_config
 
 
 def make_link_factory(args, cfg):
@@ -72,7 +72,7 @@ def main(argv=None):
     from .record import new_run_dir
     if args.resume:
         run_dir = args.resume
-        cfg = load_config(os.path.join(run_dir, 'config.json'))
+        cfg = load_run_config(os.path.join(run_dir, 'config.json'))
     else:
         cfg = load_config(args.config)
         run_dir = new_run_dir(args.data_dir)

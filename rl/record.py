@@ -21,7 +21,9 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LOG_FIELDS = ['episode', 'kind', 'scenario', 'status', 'wall_s', 'board_s', 'home', 'r1', 'r2', 'step_s',
               'samples', 'decisions', 'return', 'rms', 'rms_after_step', 'mean_pwm', 'miss', 'miss_frac',
               'mean_abs_du', 'fallbacks_total', 'updates', 'buffer', 'alpha', 'q_loss', 'pi_loss', 'entropy',
-              'motor_on_s']
+              'motor_on_s', 'ss_e1', 'ss_e2', 'ss_abs', 'ss_pwm_sd']
+# ss_*: 정상상태 지표 (run.ss_win_s 창 = 스텝 직전·에피소드 끝의 마지막 1.5 s). ss_e1/ss_e2 = 각 창의 평균 e(부호 있음),
+#       ss_abs = 두 창의 평균 |e|, ss_pwm_sd = 창 안 PWM 표준편차(창마다 평균을 뺀 합동 값, 떨림 지표)
 
 
 def new_run_dir(base: str | None = None, date: str | None = None) -> str:
@@ -46,9 +48,15 @@ class Recorder:
         if checkpoint_dir:
             os.makedirs(os.path.join(run_dir, 'checkpoint'), exist_ok=True)
         self.log_path = os.path.join(run_dir, log_name)
-        new = not os.path.exists(self.log_path)
+        new = not os.path.exists(self.log_path) or os.path.getsize(self.log_path) == 0
+        fields = LOG_FIELDS
+        if not new:   # 이어 하기: 기존 머리줄의 열을 그대로 씀 (옛 실행에 새 열을 섞으면 CSV 가 어긋남)
+            with open(self.log_path, encoding='utf-8', newline='') as f:
+                head = next(csv.reader(f), None)
+            if head:
+                fields = head
         self._logf = open(self.log_path, 'a', newline='', encoding='utf-8')
-        self._log = csv.DictWriter(self._logf, fieldnames=LOG_FIELDS, extrasaction='ignore')
+        self._log = csv.DictWriter(self._logf, fieldnames=fields, extrasaction='ignore')
         if new:
             self._log.writeheader()
         self._evf = open(os.path.join(run_dir, 'events.log'), 'a', encoding='utf-8')
