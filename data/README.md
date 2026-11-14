@@ -7,9 +7,13 @@
 | [20261106](20261106/analysis/REPORT.md) | 11-06 13:45–13:52 | β 0.301, DLPF 2, ±4 g/±500 °/s | STAIR ×2, STEP, CHIRP (PWM 180 ± 12, 0.1–3 Hz) | ❌ 프로펠러 진동으로 각도 오염. 동특성 식별 불가 (기록용) |
 | [20261106_run2](20261106_run2/analysis/REPORT.md) | 11-06 14:15–14:22 | β 0.02, DLPF 4, ±16 g/±2000 °/s | MANUAL, STAIR ×2 (50→250, 3 s), STEP ×2 (150→162), CHIRP ×2 (150 ± 12, 0.1–3 Hz) | ✅ 정적 특성, 1차 + 지연 모델 (K 0.15–0.21) |
 | [20261106_run3](20261106_run3/analysis/REPORT.md) | 11-06 14:34–14:40 | 같음 | CHIRP ×2 (150 ± 12, 0.1–10 Hz), CHIRP ×2 (150 ± **25**, 0.1–7 Hz) | ✅ **3.47 Hz 공진 확인, 최종 모델**. ±25가 가장 좋은 데이터 (SNR 25) |
+| [20261113_run1](20261113_run1/analysis/REPORT.md) | 11-13 13:18–13:34 | **기구 수정 후**(케이블 간섭 최소화). 펌웨어 2.0, 축 Z+, β 0.004 (계단 0.006/0.011), DLPF 5 (계단 하나는 4) | STAIR ×2 (50→250, 8 s/6 s), STEP ×2 (160→172), CHIRP ×2 (160 ± 12, **0.1–8 Hz**) | ✅ **현재 모델**: 공진 **2.84 Hz**/ζ 0.136, T 0.319 s, 지연 21 ms, K 0.14 + 느린 경로 0.05/(6 s+1) |
+| [20261113_run2](20261113_run2/analysis/REPORT.md) | 11-13 13:54–14:30 | 펌웨어 2.1, 같은 기구 | CLSTEP PI 4.5/13.5 + 노치 2.85 Hz, CLSTEP P 4 + 노치, RELAY 30° (d 15) | ✅ PI + 노치 θ 적합 91%. 30° 릴레이 Ku 6.2. P 기록에 케이블 충격 |
+| [20261113_run3](20261113_run3/analysis/REPORT.md) | 11-13 15:29–15:41 | 같음, 최대 PWM 210, umin 40, 노치 없음 | CLSTEP 손튜닝 PID ×2·PI ×1·Z-N PID ×2 (20→30°), RELAY 20° (d 15), UI 설정 파일 | ✅ **모델 검증**: θ·PWM 92–94%, 릴레이 Tu 0.370 s = 모델. Z-N PID 30°에서 진동 |
 | [calibration](calibration/) | 10-31 | (1주차 펌웨어) | MPU6050 수평 보정 오프셋 | 펌웨어의 가속도 오프셋 기본값 |
 
-공통 조건: 축 Z−, Ts = 10 ms, 입력은 PWM, 모터 전원 12 V(전압은 기록하지 않음 — 다음부터 기록 권장).
+공통 조건: Ts = 10 ms, 입력은 PWM, 모터 전원 12 V(전압은 기록하지 않음 — 다음부터 기록 권장). 축은 11-06 Z−, 11-13 Z+.
+11-06 run들은 **기구 수정 전**입니다. 11-13 run들은 모두 수정된 기구에서 얻었고, 원본은 사용자 Downloads 폴더에서 복사했습니다(`새 폴더`·`새 폴더 (2)` 사본과 바이트가 같음을 확인).
 
 ## 새 데이터를 올릴 때
 
@@ -20,5 +24,6 @@
    python analysis/aero_analyze.py data/<폴더>          # 품질·재현성·정적 특성·교차검증
    python analysis/aero_freqresp.py data/<폴더>         # CHIRP 주파수응답
    python analysis/aero_model_fit.py --est <CHIRP들> --val <나머지>   # 공진 포함 모델
+   python analysis/aero_closedloop.py data/<폴더>       # 폐루프 기록(CLSTEP·RELAY)을 모델 + 펌웨어 PID로 재현
    ```
 4. 결론을 `data/<폴더>/analysis/REPORT.md`에 쓰고, 큰 결론이 바뀌면 [docs/RESULTS.md](../docs/RESULTS.md)도 갱신합니다.

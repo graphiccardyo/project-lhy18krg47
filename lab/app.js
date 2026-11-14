@@ -877,7 +877,7 @@ function updatePidPred() {
   $('tdTxt').textContent = td ? `Td = ${(td * 1000).toFixed(0)} ms` : '';
   const ref = []; for (let k = 0; k < 800; k++) ref.push(k < 100 ? 20 : 25);
   const lines = [];
-  for (const K of [0.12, 0.15, 0.21]) {
+  for (const K of [0.12, 0.14, 0.24]) {
     const r = SysId.simulateClosedLoop({ K }, g, ref, 0.01, { umin: g.umin, umax: S.cfg.umax ?? 255 });
     const rec = { th: Array.from(r.th), u: Array.from(r.u), ref, ph: ref.map((v, k) => (k < 100 ? 1 : 2)), ts: 0.01 };
     const m = SysId.clStepMetrics(rec);
@@ -885,7 +885,7 @@ function updatePidPred() {
     lines.push(blow ? `K=${K.toFixed(2)}: 발산 또는 진동 지속 — 이득을 낮추세요`
       : `K=${K.toFixed(2)}: 상승 ${m.tr.toFixed(2)} s · 오버슈트 ${m.os.toFixed(1)}% · 정착(5%) ${Number.isFinite(m.ts5) ? m.ts5.toFixed(2) + ' s' : '—'} · 정상오차 ${m.ess.toFixed(2)}° · PWM ${m.uMin.toFixed(0)}–${m.uPeak.toFixed(0)}`);
   }
-  $('pidPred').textContent = '모델 예측 (기준 20°→25°, 공진 3.47 Hz, 자이로 잡음 없음):\n' + lines.join('\n');
+  $('pidPred').textContent = '모델 예측 (기준 20°→25°, 11-13 모델: 공진 2.84 Hz + 느린 경로, 자이로 잡음 없음):\n' + lines.join('\n');
 }
 
 function runClStep() {
@@ -913,7 +913,7 @@ function showClResult(r) {
   const ref = r.ref.slice(s0).map((v) => (Number.isFinite(v) ? v : m.r0));
   const t = ref.map((_, k) => k * r.ts);
   const series = [{ y: r.th.slice(s0), color: '--s1', width: 1.2, label: '측정 θ' }, { y: ref, color: '--s4', dash: [5, 3], step: true, label: '기준' }];
-  for (const [K, col] of [[0.12, '--s3'], [0.21, '--s2']]) {
+  for (const [K, col] of [[0.14, '--s3'], [0.24, '--s2']]) {
     const sim = SysId.simulateClosedLoop({ K }, g, ref, r.ts, { umin: g.umin || 0, umax: S.cfg.umax ?? 255 });
     series.push({ y: Array.from(sim.th), color: col, width: 1, dash: [2, 2], label: `모델 K=${K}` });
   }
@@ -942,7 +942,7 @@ function showRelayResult(r) {
     `릴레이 진동: 진폭 a = ${res.a.toFixed(2)}° (±${res.aSd.toFixed(2)}), 주기 Tu = ${res.Tu.toFixed(3)} s (${(1 / res.Tu).toFixed(2)} Hz, ±${(res.TuSd * 1000).toFixed(0)} ms), ${res.cycles}주기\n` +
     `한계이득 Ku = 4d/(π√(a²−ε²)) = ${res.Ku.toFixed(2)} PWM/°   (d=${d}, ε=${h}°)\n` +
     `Z-N  P  : ${f(z.P)}\nZ-N  PI : ${f(z.PI)}\nZ-N  PID: ${f(z.PID)}\n` +
-    (res.Tu < 0.5 ? '※ Tu 가 0.5 s 미만 = 진동이 3–4 Hz 구조 공진에서 일어났습니다. Z-N 이득은 진자 동특성이 아니라 공진으로 정해지므로 공격적일 수 있습니다. 노치를 켜거나 이득을 줄여 시작하세요.' : '');
+    (res.Tu < 0.5 ? '※ Tu 가 0.5 s 미만 = 진동이 구조 공진(11-13 기구 2.84 Hz, 수정 전 3.47 Hz)에서 일어났습니다. Z-N 이득은 진자 동특성이 아니라 공진으로 정해지므로 공격적일 수 있습니다. 노치를 켜거나 이득을 줄여 시작하세요.' : '');
   el.hidden = false; $('znBtns').hidden = false;
   selectTab('tPid');
 }

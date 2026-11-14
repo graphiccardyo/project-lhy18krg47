@@ -218,8 +218,10 @@
   }
 
   // ---------------------------------------------------------------- 폐루프
-  // 식별 모델 (data/20261106_run3): ΔΘ/ΔPWM = K e^(-Ls)/(Ts+1) · ωr²/(s²+2ζr ωr s+ωr²)
-  const PLANT = { K: 0.15, T: 0.328, L: 0.016, wr: 21.8, zr: 0.123 };
+  // 식별 모델 (2026-11-13 기구 수정 후, data/20261113_run1·run3):
+  //   ΔΘ/ΔPWM = K e^(-Ls)/(Ts+1) · ωr²/(s²+2ζr ωr s+ωr²) + Ks e^(-Ls)/(Tc s+1)
+  //   (기구 수정 전 11-06: K 0.15, T 0.328, L 0.016, ωr 21.8 (3.47 Hz), ζr 0.123, Ks 0)
+  const PLANT = { K: 0.14, T: 0.319, L: 0.021, wr: 2 * Math.PI * 2.84, zr: 0.136, Ks: 0.05, Tc: 6.0 };
 
   function notchCoeffs(n, ts) {
     if (!n || !n.f) return null;
@@ -234,11 +236,11 @@
     const ubuf = new Array(nd + 1).fill(0);
     const nc = notchCoeffs(g.notch, ts);
     const umin = opts.umin ?? 0, umax = opts.umax ?? 255, r0 = ref[0];
-    let x1 = 0, y = 0, yd = 0, I = 0, omF = 0, z1 = 0, z2 = 0;
+    let x1 = 0, xs = 0, y = 0, yd = 0, I = 0, omF = 0, z1 = 0, z2 = 0;
     const th = new Float64Array(ref.length), u = new Float64Array(ref.length);
     for (let k = 0; k < ref.length; k++) {
-      const theta = r0 + y, e = ref[k] - theta;
-      omF += ts / (0.0159 + ts) * (yd - omF);
+      const theta = r0 + y + xs, e = ref[k] - theta;
+      omF += ts / (0.0159 + ts) * (yd + (P.Ks * ubuf[0] - xs) / P.Tc - omF);
       let v = g.kp * e + I - g.kd * omF;
       if (nc) { const o = nc.b[0] * v + z1; z1 = nc.b[1] * v - nc.a[0] * o + z2; z2 = nc.b[2] * v - nc.a[1] * o; v = o; }
       const uu = g.ff + v, us = Math.min(umax, Math.max(umin, uu));
@@ -247,6 +249,7 @@
       for (let i = 0; i < nsub; i++) {
         ubuf.push(us - g.ff); const ud = ubuf.shift();
         x1 += (P.K * ud - x1) * dt / P.T;
+        xs += (P.Ks * ud - xs) * dt / P.Tc;
         yd += (P.wr * P.wr * (x1 - y) - 2 * P.zr * P.wr * yd) * dt;
         y += yd * dt;
       }
