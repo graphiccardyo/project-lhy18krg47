@@ -1,0 +1,29 @@
+{
+ "policy": "C:\\Users\\avalo\\Desktop\\aeropendulum-main\\data\\20261114_rl1\\checkpoint",
+ "run_dir": "C:\\Users\\avalo\\Desktop\\aeropendulum-main\\data\\20261114_rl1",
+ "snapshot": null,
+ "policy_info": {
+  "file": "C:\\Users\\avalo\\Desktop\\aeropendulum-main\\data\\20261114_rl1\\checkpoint\\sac.pt",
+  "updates": 128905,
+  "alpha": 0.00490903202444315
+ },
+ "link": "COM4",
+ "fw": "AEROPEND_RL 1.0",
+ "sim": false,
+ "bench": false,
+ "scenarios": [
+  [
+   25.0,
+   25.0,
+   25.0
+  ]
+ ],
+ "repeat": 1,
+ "dur_s": 20.0,
+ "pid": false,
+ "settle_s": 3.0,
+ "time": "2026-11-14T22:53:57",
+ "end_reason": "사용자 정지",
+ "episodes": [],
+ "aggregate": {}
+}
