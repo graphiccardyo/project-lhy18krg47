@@ -1,0 +1,2 @@
+episode,kind,scenario,status,wall_s,board_s,home,r1,r2,step_s,samples,decisions,return,rms,rms_after_step,mean_pwm,miss,miss_frac,mean_abs_du,fallbacks_total,updates,buffer,alpha,q_loss,pi_loss,entropy,motor_on_s,ss_e1,ss_e2,ss_abs,ss_pwm_sd
+0,play,0,done,1794665872.9,24.02,25.0,25.0,25.0,10.0,2000,1000,-125.1993,5.1407,3.1671,164.7,0,0.0,3.311,0,0,0,0.2,,,,23.9,0.6214,-0.7841,1.1883,7.485
