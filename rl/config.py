@@ -1,0 +1,247 @@
+"""설정 한 곳: 플랜트·PID·안전·RL·에피소드·휴식·SAC·정지 조건.
+
+- 모든 숫자는 여기 dataclass 기본값에 있고, JSON 으로 저장/읽기 합니다(`load_config`, `save_config`).
+- JSON 에는 바꾸고 싶은 항목만 적어도 됩니다(나머지는 기본값). 모르는 키는 오류로 알립니다.
+- "재식별" 표시가 붙은 값은 플랜트를 다시 식별하면 바꿔 끼울 값입니다.
+  현재 기본값 = 2026-11-13 기구 수정 후 모델 (docs/RESULTS.md §한눈에·§3, data/20261113_run3/analysis/REPORT.md §6).
+"""
+from __future__ import annotations
+
+import dataclasses
+import json
+from dataclasses import dataclass, field
+from typing import Any
+
+# 11-13 계단 2회 평균 정적 특성 (PWM → θ [deg]). lab/sim.js 의 MAP 과 같은 값.   [재식별]
+STATIC_MAP_1113 = [
+    [0, 0.0], [30, 0.0], [50, 1.95], [60, 3.0], [70, 4.8], [80, 6.75], [90, 8.7], [100, 11.35], [110, 13.55],
+    [120, 15.3], [130, 17.1], [140, 18.9], [150, 20.8], [160, 22.9], [170, 25.6], [180, 27.6], [190, 29.95],
+    [200, 32.25], [210, 35.2], [220, 38.3], [230, 42.1], [240, 47.25], [250, 53.3], [255, 56.5],
+]
+
+
+@dataclass
+class PlantCfg:
+    """가짜 보드의 플랜트 (rl/plant.py).
+
+    G(s) = [ K/(T s + 1) · ωr²/(s² + 2ζωr s + ωr²) + Ks/(Tc s + 1) ] · e^(−L s)   [deg/PWM]
+    큰 신호는 정적 지도로: 빠른 경로 입력 = (K/K_nom)·f·map(u), 느린 경로 = (Ks/Ks_nom)·(1−f)·map(u),
+    f = K_nom/(K_nom+Ks_nom). 그래서 운전점에 따라 국소 이득이 바뀝니다(20° 0.15 → 30° 0.24 경향).
+    """
+    static_map: list = field(default_factory=lambda: [list(p) for p in STATIC_MAP_1113])  # [재식별]
+    K: float = 0.14          # 빠른 이득 [deg/PWM]                                    [재식별]
+    Ks: float = 0.05         # 느린 경로 이득 (케이블 점탄성·피벗 크리프)             [재식별]
+    K_nom: float = 0.14      # 정적 지도가 나타내는 공칭 K (지도를 바꾸면 같이)       [재식별]
+    Ks_nom: float = 0.05     # 정적 지도가 나타내는 공칭 Ks                           [재식별]
+    T: float = 0.319         # 1차 지연 시정수 [s]                                    [재식별]
+    Tc: float = 6.0          # 느린 경로 시정수 [s]                                   [재식별]
+    delay_ms: float = 21.0   # 입력 지연 [ms] (DLPF 5 기준)                           [재식별]
+    fr_hz: float = 2.84      # 구조 공진 [Hz]                                         [재식별]
+    zr: float = 0.136        # 공진 감쇠비                                            [재식별]
+    offset_deg: float = 0.0  # 정적 지도 오프셋 [deg] (기록마다 ±3° 차이)
+    rest_offset_deg: float = 3.0  # 모터 정지 시 정지 위치가 0° 로 안 돌아옴 (케이블 간섭): 멈출 때마다 ±이 값에서 뽑음
+    friction_deg: float = 1.0  # 피벗 마찰 히스테리시스 폭 [deg] (백래시 모델: 정지 위치가 접근 방향에 따라 ±폭/2)
+    noise_deg: float = 0.04    # θ 측정 잡음 σ [deg]
+    omega_noise: float = 0.5   # ω 백색 잡음 σ [deg/s]
+    vib_amp: float = 9.0       # 프로펠러 진동이 자이로에 실리는 진폭 [deg/s] (11-13: σ 6–7)
+    vib_hz: float = 46.3
+    acc_noise_deg: float = 4.0  # θacc 잡음 σ (모터 가동 중)
+    stall_pwm: float = 30.0     # 이 아래면 모터 정지
+    start_pwm: float = 45.0     # 정지 뒤 이 이상에서
+    start_delay: float = 0.15   # 이 시간 지나야 다시 추력 [s]
+    # 케이블 충격 외란 (모델에 없는 실측 현상: 15–25° 튐 + 2.7 Hz 울림). 0 = 끔
+    shock_rate: float = 0.0          # 평균 발생 횟수 [1/s]
+    shock_w: list = field(default_factory=lambda: [100.0, 300.0])   # 공진 모드 각속도 충격 [deg/s] (부호 무작위)
+    # 도메인 랜덤화: True 면 RUN RL 마다 아래 범위에서 새로 뽑음 (가짜 보드 전용)
+    randomize: bool = False
+    dr: dict = field(default_factory=lambda: {
+        'K': [0.11, 0.26, 'log'], 'Ks': [0.0, 0.08], 'Tc': [3.0, 10.0], 'T': [0.27, 0.38],
+        'delay_ms': [15.0, 30.0], 'fr_hz': [2.5, 3.1], 'zr': [0.09, 0.18], 'offset_deg': [-3.0, 3.0],
+        'shock_rate': [0.0, 0.2], 'noise_deg': [0.02, 0.08],
+    })
+    seed: int = 1
+
+
+@dataclass
+class PidCfg:
+    """보드 PID (복귀·안전 복귀·기준선). 현재 사용자 손튜닝 값 (run3)."""
+    kp: float = 0.9
+    ki: float = 7.0
+    kd: float = 0.02
+    ff: int = 140
+    umin: int = 40
+    notch_cHz: int = 0        # 0 = 노치 끔
+    notch_zz: int = 150
+    notch_zp: int = 700
+
+
+@dataclass
+class LimCfg:
+    pwm_max: int = 210
+    angle_cdeg: int = 10000   # 각도 한계 100°
+    rev: int = 0
+
+
+@dataclass
+class RLBoardCfg:
+    """`RL <dec> <lag> <du_max> <u_lo> <u_hi>`"""
+    dec: int = 2       # 결정 주기 [샘플] → 10 ms × 2 = 20 ms (50 Hz)
+    lag: int = 2       # 적용 지연 [샘플]. 실측 왕복 7–9 ms → lag 1(10 ms 창)은 누락, lag 2(20 ms)는 누락 0 (11-14 벤치)
+    # 보드 재부팅 기본값은 lag=1 이므로 학습기는 항상 RL 명령으로 명시 설정
+    du_max: int = 10   # 한 번에 바꿀 수 있는 최대 PWM (최대 변화율 500 PWM/s)
+    u_lo: int = 40     # 정책 PWM 범위 (모터 정지 방지 umin 과 같게)
+    u_hi: int = 210    # = LIM 최대 PWM
+
+
+@dataclass
+class SafeCfg:
+    """`SAFE <th_lo> <th_hi> <w_max>` — 에피소드 안전 범위(벗어나면 PID 복귀). 케이블 충격 튐(15–25°) 여유 포함."""
+    th_lo_cdeg: int = -1000    # −10°
+    th_hi_cdeg: int = 7000     # 70°
+    w_max_cdps: int = 60000    # 600 °/s (충격 300 °/s + 진동)
+
+
+@dataclass
+class EpisodeCfg:
+    dur_s: float = 10.0             # 에피소드 길이
+    ref_lo: float = 15.0            # 기준 범위 [deg]                                 [재식별]
+    ref_hi: float = 35.0
+    home_deg: float | None = None   # None = 에피소드마다 기준 범위에서 무작위
+    step_frac: list = field(default_factory=lambda: [0.35, 0.65])  # 중간 기준 스텝 시각 (에피소드 비율)
+    min_step_deg: float = 4.0       # 기준 변경 최소 크기 (home→r, r→r2)
+    settle_tol_deg: float = 2.0     # 복귀 정착 판정 |θ−home|
+    settle_hold_s: float = 1.0      # 이 시간 동안 정착 유지
+    settle_timeout_s: float = 15.0  # 넘으면 그냥 시작(경고 기록)
+    home_min_s: float = 2.0         # 복귀 최소 시간
+
+
+@dataclass
+class EnvCfg:
+    """관측 정규화·보상 (rl/env.py)."""
+    th_center: float = 25.0     # 각도 정규화 중심 [deg]
+    th_scale: float = 10.0      # 각도·오차 스케일 [deg]
+    w_scale: float = 100.0      # 각속도 스케일 [deg/s]
+    w_lpf_hz: float = 10.0      # ω 저역통과 (진동 제거, PID 와 같은 10 Hz)
+    u_center: float = 125.0     # PWM 정규화 중심
+    u_scale: float = 85.0       # PWM 정규화 스케일
+    err_scale: float = 2.0      # 보상 오차 스케일 [deg]: r_err = −min((e/err_scale)², err_cap)
+    err_cap: float = 16.0
+    w_abs: float = 1.0          # |e|/err_scale 항 (정상상태 정밀도용, 제곱만 쓰면 작은 오차의 기울기가 0)
+    w_du: float = 0.05          # 행동(PWM 변화) 벌점: w_du·(du/du_max)²
+    w_ddu: float = 0.02         # 행동 변화 벌점: w_ddu·((du−du_prev)/du_max)²
+    fallback_penalty: float = 30.0   # FALLBACK 종단 벌점
+    abort_penalty: float = 60.0      # ABORT 종단 벌점
+    reward_scale: float = 0.03       # 전체 보상 배율 (Q 크기 조절)
+    sigma_delta: bool = True         # 행동 → 정수 du 양자화에 시그마-델타 (반올림 불감대 제거)
+    obs_eint: bool = True            # 관측에 오차의 느린 평균 (시정수 eint_tau_s) 추가 → 느린 경로 상태의 단서
+    eint_tau_s: float = 3.0
+    eint_scale: float = 2.0          # [deg]
+    act_pow: float = 2.0            # 행동 곡선 du = du_max·sign(a)|a|^p (p > 1 이면 0 근처 해상도↑)
+
+
+@dataclass
+class RestCfg:
+    """모터 과열 방지 휴식: 모터 가동 누적이 max_on_s 를 넘으면 STOP 하고 rest_s 쉼."""
+    max_on_s: float = 300.0
+    rest_s: float = 90.0
+
+
+@dataclass
+class SacCfg:
+    hidden: int = 64            # 관측 7차원·행동 1차원이라 작은 망으로 충분, 갱신 1회 ≈ 5 ms (CPU)
+    batch: int = 256
+    lr: float = 3e-4
+    gamma: float = 0.99         # 결정 20 ms → 유효 지평 약 2 s (느린 경로·마찰 때문에 작은 보정의 효과가 늦게 나타남)
+    tau: float = 0.005
+    buffer_size: int = 500_000  # 50 Hz × 2.8 h
+    warmup_steps: int = 2500    # 균일 무작위 행동 결정 수 (≈ 5 에피소드)
+    utd: float = 1.0            # 결정 1개당 경사 갱신 수 (에피소드 사이에 몰아서)
+    init_alpha: float = 0.2
+    target_entropy: float = -1.0
+    log_std_min: float = -6.0
+    log_std_max: float = 1.0
+    seed: int = 0
+
+
+@dataclass
+class MonitorCfg:
+    """자동 일시정지 조건."""
+    max_overrun_delta: int = 5     # S 줄 overruns(누적) 증가가 한 줄 사이에 이보다 크면
+    sat_max_per_s: int = 50        # S 줄 sat 이 이보다 크면
+    sat_consec: int = 3            # sat > 0 인 S 줄이 연속 이만큼이면
+    max_miss_frac: float = 0.2     # 한 에피소드 miss 비율이 이보다 크면
+    link_timeout_s: float = 2.0    # 이 시간 동안 아무 줄도 안 오면 연결 끊김으로 봄
+    rest_check_deg: float = 5.0    # 휴식 끝 정지 확인: 마지막 1 s 평균 |θ| 가 이보다 크면 일시정지 (정지 위치는 0° 가 아닐 수 있어 너그럽게; ZERO 는 절대 자동으로 보내지 않음)
+    hb_watchdog_s: float = 20.0   # 학습기 주 스레드가 이 시간 동안 멈추면 하트비트를 끊어 보드가 정지하게 함
+
+
+@dataclass
+class StopCfg:
+    max_hours: float = 3.0         # 총 실행 시간 (휴식 포함, 보드 시계)
+    max_episodes: int = 3000       # 학습 에피소드 수
+    max_fallbacks: int = 150       # FALLBACK 누적
+
+
+@dataclass
+class RunCfg:
+    eval_every: int = 10           # 학습 에피소드 N 개마다 평가
+    eval_refs: list = field(default_factory=lambda: [[20.0, 30.0, 22.0], [30.0, 18.0, 28.0], [25.0, 33.0, 16.0]])
+    # 평가 시나리오 [home, r1, r2]: r1 은 시작부터, r2 는 에피소드 절반에서
+    checkpoint_every: int = 10     # 에피소드마다
+    baseline_at_start: bool = True
+    save_episode_csv: bool = True
+    keep_episode_series: int = 3   # status() 에 넣을 최근 에피소드 시계열 개수
+    bench: bool = False            # True 면 BENCH 1 (드라이런: 모터 핀 LOW) 로 학습 루프만 시험
+
+
+@dataclass
+class Config:
+    plant: PlantCfg = field(default_factory=PlantCfg)
+    pid: PidCfg = field(default_factory=PidCfg)
+    lim: LimCfg = field(default_factory=LimCfg)
+    rl: RLBoardCfg = field(default_factory=RLBoardCfg)
+    safe: SafeCfg = field(default_factory=SafeCfg)
+    episode: EpisodeCfg = field(default_factory=EpisodeCfg)
+    env: EnvCfg = field(default_factory=EnvCfg)
+    rest: RestCfg = field(default_factory=RestCfg)
+    sac: SacCfg = field(default_factory=SacCfg)
+    monitor: MonitorCfg = field(default_factory=MonitorCfg)
+    stop: StopCfg = field(default_factory=StopCfg)
+    run: RunCfg = field(default_factory=RunCfg)
+    ts_s: float = 0.010            # 보드 샘플 주기 (STREAM 2). 실제 값은 CFG ts_ms 로 확인
+
+
+def to_dict(cfg: Config) -> dict:
+    return dataclasses.asdict(cfg)
+
+
+def _merge(obj: Any, d: dict, path: str):
+    names = {f.name: f for f in dataclasses.fields(obj)}
+    for k, v in d.items():
+        if k not in names:
+            raise KeyError(f'알 수 없는 설정 키: {path}{k}')
+        cur = getattr(obj, k)
+        if dataclasses.is_dataclass(cur):
+            if not isinstance(v, dict):
+                raise TypeError(f'{path}{k} 는 객체여야 합니다')
+            _merge(cur, v, f'{path}{k}.')
+        else:
+            setattr(obj, k, v)
+
+
+def from_dict(d: dict) -> Config:
+    cfg = Config()
+    _merge(cfg, d or {}, '')
+    return cfg
+
+
+def load_config(path: str | None) -> Config:
+    if not path:
+        return Config()
+    with open(path, encoding='utf-8') as f:
+        return from_dict(json.load(f))
+
+
+def save_config(cfg: Config, path: str):
+    with open(path, 'w', encoding='utf-8') as f:
+        json.dump(to_dict(cfg), f, ensure_ascii=False, indent=2)

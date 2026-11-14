@@ -1,0 +1,269 @@
+"""하드웨어 없이 하는 자체 시험.
+
+    python -m rl.selftest            전부 (몇 분)
+    python -m rl.selftest --quick    짧은 학습 시험 생략
+
+1. 프로토콜: bench_test 전 항목을 가짜 보드(가상시간)로
+2. SAC: 버퍼 저장/복원, numpy 추론 = torch 액터, 체크포인트 왕복, 추론 시간, 작은 문제 학습
+3. env: 합성 D 줄로 결정 위상·실제 증분·종단/절단
+4. 트레이너: 가상시간 짧은 학습이 실제로 나아지는지, 일시정지/재개(사용자·고장 주입), --resume
+시험 실행 폴더는 임시 폴더에 만들고 지웁니다.
+"""
+from __future__ import annotations
+
+import argparse
+import math
+import os
+import shutil
+import sys
+import tempfile
+import time
+
+import numpy as np
+
+RESULTS = []
+
+
+def check(name, ok, detail=''):
+    RESULTS.append((name, bool(ok), detail))
+    print(f'  [{"PASS" if ok else "FAIL"}] {name}' + (f' — {detail}' if detail else ''), flush=True)
+    return ok
+
+
+def t_protocol():
+    print('== 1. 프로토콜 (bench_test, 가짜 보드 가상시간)', flush=True)
+    from .bench_test import run_bench
+    from .config import PlantCfg
+    from .fake_board import FakeBoard
+    from .link import VirtualLink
+    lines = []
+    ok, b = run_bench(VirtualLink(FakeBoard(PlantCfg(), seed=5)), log=lines.append, quick=True)
+    req = [r for r in b.results if r[3]]
+    fails = [f'{r[0]} — {r[2]}' for r in req if not r[1]]
+    check(f'bench_test 필수 {sum(r[1] for r in req)}/{len(req)} 통과', ok, '; '.join(fails[:3]))
+
+
+def t_sac(tmp):
+    print('== 2. SAC 단위 시험', flush=True)
+    import torch
+    from .config import SacCfg
+    from .sac import SAC
+    cfg = SacCfg(hidden=64, batch=64, buffer_size=5000, warmup_steps=0, seed=3)
+    s = SAC(3, 1, cfg)
+    rng = np.random.default_rng(0)
+    for _ in range(300):
+        s.buffer.add(rng.normal(size=3), rng.uniform(-1, 1, 1), rng.normal(), rng.normal(size=3), 0.0)
+    s.update(5)
+    s.sync_policy()
+    o = rng.normal(size=3).astype(np.float32)
+    with torch.no_grad():
+        mu, ls = s.actor(torch.from_numpy(o)[None])
+    a_np = s.policy.act(o, True)
+    a_t = math.tanh(mu[0, 0].item())
+    check('numpy 추론 = torch 액터 (결정적)', abs(a_t - float(a_np[0])) < 1e-5, f'{a_t:.6f} vs {float(a_np[0]):.6f}')
+    d = os.path.join(tmp, 'ck')
+    s.save(d, extra={'x': 1})
+    s2 = SAC(3, 1, cfg)
+    ex = s2.load(d)
+    a2 = s2.policy.act(o, True)
+    ok = (ex.get('x') == 1 and s2.buffer.n == 300 and s2.updates == s.updates and abs(a2[0] - a_np[0]) < 1e-9
+          and np.allclose(s2.buffer.o[:300], s.buffer.o[:300]) and abs(s2.alpha - s.alpha) < 1e-9
+          and len(s2.opt_critic.state_dict()['state']) > 0)
+    check('체크포인트 왕복 (망·버퍼·옵티마이저·α·카운터)', ok)
+    tt = []
+    for _ in range(3000):
+        t0 = time.perf_counter()
+        s.policy.act(o)
+        tt.append(time.perf_counter() - t0)
+    check('numpy 추론 시간 < 0.2 ms (중앙값)', np.median(tt) < 2e-4,
+          f'중앙 {np.median(tt) * 1e6:.1f} µs, p99 {np.percentile(tt, 99) * 1e6:.1f} µs')
+
+    # 작은 문제: 적분기 s' = s + 0.2a, r = −s² → 결정적 정책이 0 으로 몰아야 함
+    cfg = SacCfg(hidden=64, batch=128, buffer_size=20000, gamma=0.9, seed=1, init_alpha=0.1)
+    ag = SAC(1, 1, cfg)
+    rng = np.random.default_rng(1)
+    x = 0.0
+    for step in range(3000):
+        if step % 30 == 0:
+            x = rng.uniform(-1, 1)
+        a = rng.uniform(-1, 1) if step < 500 else float(ag.policy.act(np.array([x], np.float32))[0])
+        x2 = float(np.clip(x + 0.2 * a, -1.5, 1.5))
+        ag.buffer.add([x], [a], -x2 * x2, [x2], 0.0)
+        x = x2
+        if step >= 500:
+            ag.update(1)
+            if step % 50 == 0:
+                ag.sync_policy()
+    ag.sync_policy()
+    finals = []
+    for x0 in (-0.9, -0.4, 0.5, 1.0):
+        x = x0
+        for _ in range(20):
+            x = float(np.clip(x + 0.2 * ag.policy.act(np.array([x], np.float32), True)[0], -1.5, 1.5))
+        finals.append(abs(x))
+    check('작은 문제 학습 (적분기를 0 으로)', max(finals) < 0.1, f'20스텝 뒤 |x| 최대 {max(finals):.3f}')
+
+
+def t_env():
+    print('== 3. env (합성 D 줄)', flush=True)
+    from .config import Config
+    from .env import EpisodeEnv
+    from .link import parse_line
+    cfg = Config()
+    cfg.env.act_pow = 1.0          # 이 시험은 선형 행동 곡선 기준 (a 0.5 → du 5)
+    env = EpisodeEnv(cfg)
+    env.arm(lambda o: 0.5, 2, 10)
+    sent = []
+    # 대기 중 줄(7필드)은 세지 않아야 함
+    env.on_D(parse_line('D,0,140,2000,0,2000,0,2000'))
+    u = 140
+    for n in range(10):
+        if n in (2, 4, 8):        # n = 6 은 누락(miss) 흉내 → 그 전이의 실제 증분은 0
+            u = min(210, u + 5)
+        cmd = env.on_D(parse_line(f'D,{10 * n},{u},{2000 + n},0,2000,1,2500,0'))
+        sent.append(cmd)
+    check('결정 샘플에서만 A (n = 0, 2, 4, …)', sent[0] == 'A 5' and sent[1] is None and sent[2] == 'A 5'
+          and sum(c is not None for c in sent) == 5, str(sent))
+    check('전이 수 = 결정 − 1, 실제 증분 a_eff = Δu/du_max (누락은 0)', len(env.trans) == 4 and
+          [round(t[1], 3) for t in env.trans] == [0.5, 0.5, 0.0, 0.5], f'{[round(t[1], 2) for t in env.trans]}')
+    o = env.trans[-1][3]
+    check('관측: 오차·PWM·직전 행동', abs(o[0] - (25.0 - 20.08) / cfg.env.th_scale) < 1e-4 and
+          abs(o[4] - (u - cfg.env.u_center) / cfg.env.u_scale) < 1e-5 and abs(o[5] - 0.5) < 1e-6, str(np.round(o, 3)))
+    env.terminal('FALLBACK')
+    check('FALLBACK → 종단 전이 (done=1, 벌점)', env.trans[-1][4] == 1.0 and
+          abs(env.trans[-1][2] + cfg.env.reward_scale * cfg.env.fallback_penalty) < 1e-9,
+          f'r={env.trans[-1][2]:.2f}')
+    env.arm(lambda o: 0.0, 2, 10)
+    for n in range(6):
+        env.on_D(parse_line(f'D,{10 * n},140,2000,0,2000,1,2500,0'))
+    env.finish()
+    check('DONE → 절단 (마지막 결정은 전이로 만들지 않음, done=0)', len(env.trans) == 2 and
+          all(t[4] == 0.0 for t in env.trans))
+
+
+def _virtual_trainer(tmp, name, episodes, overrides=None, resume_dir=None, seed=11):
+    from .config import Config
+    from .fake_board import FakeBoard
+    from .link import VirtualLink
+    from .trainer import Trainer
+    cfg = Config()
+    cfg.stop.max_episodes = episodes
+    cfg.plant.seed = seed
+    for path, v in (overrides or {}).items():
+        obj = cfg
+        parts = path.split('.')
+        for p in parts[:-1]:
+            obj = getattr(obj, p)
+        setattr(obj, parts[-1], v)
+    board = FakeBoard(cfg.plant, seed=seed)
+    vl = VirtualLink(board)
+    run_dir = resume_dir or os.path.join(tmp, name)
+    os.makedirs(run_dir, exist_ok=True)
+    tr = Trainer(cfg, lambda: vl, run_dir, resume=bool(resume_dir), autostart=True, log=None, sim=True)
+    return tr, board, run_dir
+
+
+def t_trainer(tmp, quick):
+    print('== 4. 트레이너 (가상시간)', flush=True)
+    # 일시정지/재개: 사용자 명령, 고장 주입(overruns), ABORT, 그리고 --resume
+    tr, board, rd = _virtual_trainer(tmp, 'pause', 6, {'run.baseline_at_start': False, 'sac.warmup_steps': 500,
+                                                       'run.eval_every': 3, 'rest.max_on_s': 30.0, 'rest.rest_s': 30.0})
+    tr.start()
+
+    def wait_state(states, timeout=60):
+        t0 = time.time()
+        while time.time() - t0 < timeout:
+            s = tr.status()
+            if s['state'] in states:
+                return s
+            time.sleep(0.005)
+        return tr.status()
+
+    s = wait_state(('episode',))
+    tr.command('pause')
+    s = wait_state(('paused',))
+    check('사용자 pause → 일시정지', s['state'] == 'paused' and s['paused_reason'] == '사용자 일시정지',
+          s['paused_reason'])
+    tr.command('resume')
+    s = wait_state(('episode',))
+    board.inject_overruns = 50
+    s = wait_state(('paused',))
+    check('S 줄 overruns 급증 → 자동 일시정지', s['state'] == 'paused' and 'overruns' in (s['paused_reason'] or ''),
+          s['paused_reason'])
+    tr.command('resume')
+    s = wait_state(('episode',))
+    board.alim = 500      # 각도 한계를 5° 로 → 에피소드 중 EVT ABORT ANGLE_LIMIT
+    s = wait_state(('paused',))
+    check('EVT ABORT → 자동 일시정지 (모터 STOP)', s['state'] == 'paused' and 'ABORT' in (s['paused_reason'] or '')
+          and board.u_out == 0, s['paused_reason'])
+    board.alim = 10000
+    tr.command('resume')
+    s = wait_state(('resting',), timeout=120)
+    check('모터 가동 누적 → 휴식(STOP)', s['state'] == 'resting' and s['rest_left_s'] is not None,
+          f'rest_left {s["rest_left_s"]}')
+    tr.wait(300)
+    s = tr.status()
+    check('max_episodes 에서 자동 종료 + 체크포인트', s['state'] == 'done' and s['episode'] == 6 and
+          os.path.exists(os.path.join(rd, 'checkpoint', 'sac.pt')), f'{s["state"]}, {s["episode"]} ep')
+    import json
+    try:
+        js = json.dumps(s, ensure_ascii=False)
+        keys = ('state', 'episode', 'recent_episodes', 'learning_curve', 'eval_scores', 'baseline', 'counts',
+                'mean_pwm', 'remaining_s', 'motor_on_s', 'sac', 'log')
+        check('status() 는 JSON 직렬화 가능, 문서의 키 포함', all(k in s for k in keys), f'{len(js)} 바이트')
+    except TypeError as e:
+        check('status() 는 JSON 직렬화 가능', False, str(e))
+    n_csv = len(os.listdir(os.path.join(rd, 'episodes')))
+    check('기록: 에피소드 CSV·train_log·config.json', n_csv >= 6 and os.path.exists(os.path.join(rd, 'train_log.csv'))
+          and os.path.exists(os.path.join(rd, 'config.json')), f'CSV {n_csv}개')
+    with open(os.path.join(rd, 'episodes', sorted(os.listdir(os.path.join(rd, 'episodes')))[0]), encoding='utf-8') as f:
+        head = [f.readline() for _ in range(3)]
+    check('CSV 헤더 형식 (type=RL, # pid, 열 끝 ref_deg,miss,du,reward)', 'type=RL' in head[0] and
+          head[1].startswith('# pid;') and head[2].strip().endswith('ref_deg,miss,du,reward'), head[2].strip())
+    dec0, upd0 = s['decisions'], s['updates']
+    tr2, _, _ = _virtual_trainer(tmp, 'pause', 8, {'run.baseline_at_start': False, 'sac.warmup_steps': 500,
+                                                   'run.eval_every': 3}, resume_dir=rd)
+    st = tr2.status()
+    check('--resume: 카운터·버퍼·갱신 수 복원', st['episode'] == 6 and st['decisions'] == dec0 and st['updates'] == upd0
+          and st['buffer'] == dec0, f'ep {st["episode"]}, 결정 {st["decisions"]}, 갱신 {st["updates"]}')
+    tr2.start()
+    tr2.wait(300)
+    check('--resume 뒤 이어서 학습', tr2.status()['episode'] == 8 and tr2.status()['state'] == 'done')
+
+    if quick:
+        return
+    # 짧은 학습이 나아지는지: 무작위 워밍업 직후 평가 vs 40 에피소드 뒤
+    print('  (짧은 학습: 가상시간 40 에피소드, 몇 분 걸림)', flush=True)
+    t0 = time.time()
+    tr, board, rd = _virtual_trainer(tmp, 'learn', 40, {'run.eval_every': 10, 'sac.warmup_steps': 2500}, seed=21)
+    tr.start()
+    tr.wait(3600)
+    s = tr.status()
+    ev = [e['rms_mean'] for e in s['eval_scores']]
+    base = s['baseline']['rms_mean'] if s['baseline'] else float('nan')
+    check('짧은 학습으로 평가 RMS 개선 (첫 평가 대비 40% 이상 감소)', len(ev) >= 3 and ev[-1] < 0.6 * ev[0],
+          f'평가 RMS {ev}, PID {base:.3f}°, 가상 {s["elapsed_s"] / 60:.1f} 분 / 실제 {(time.time() - t0) / 60:.1f} 분')
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser()
+    ap.add_argument('--quick', action='store_true')
+    args = ap.parse_args(argv)
+    tmp = tempfile.mkdtemp(prefix='rl_selftest_')
+    try:
+        t_env()
+        t_sac(tmp)
+        t_protocol()
+        t_trainer(tmp, args.quick)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    n = sum(ok for _, ok, _ in RESULTS)
+    print(f'\n자체 시험: {n}/{len(RESULTS)} 통과', flush=True)
+    for name, ok, det in RESULTS:
+        if not ok:
+            print(f'  실패: {name} — {det}')
+    return 0 if n == len(RESULTS) else 1
+
+
+if __name__ == '__main__':
+    sys.exit(main())
