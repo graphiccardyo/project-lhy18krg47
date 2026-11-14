@@ -5,6 +5,7 @@
 - 자동 엔트로피(α), 소프트 타깃 갱신, 리플레이 버퍼.
 - 체크포인트: 망·타깃·옵티마이저·α·카운터 (sac.pt) + 버퍼 (buffer.npz). 임시 파일에 쓴 뒤 바꿔치기.
 - `NumpyPolicy`: 액터 가중치의 numpy 사본. 제어 루프(읽기 스레드)에서 torch 없이 추론 (약 10–20 µs).
+- 정책 스냅샷: `save_policy(d)` → d/actor.pt (액터만), `load_policy(path)` 는 actor.pt 와 sac.pt 둘 다 읽음.
 """
 from __future__ import annotations
 
@@ -254,3 +255,45 @@ class SAC:
             self.buffer.load(bp)
         self.sync_policy()
         return state.get('extra', {})
+
+    # ---- 정책만 (스냅샷·재생용: 액터 가중치만, 버퍼·크리틱·옵티마이저 없음)
+    def save_policy(self, d: str):
+        """d/actor.pt 에 액터 가중치와 망 모양을 저장 (수십 KB)."""
+        os.makedirs(d, exist_ok=True)
+        state = dict(format='aero_rl_actor_1', actor=self.actor.state_dict(), obs_dim=self.obs_dim,
+                     act_dim=self.act_dim, hidden=self.cfg.hidden, log_std_min=self.cfg.log_std_min,
+                     log_std_max=self.cfg.log_std_max, alpha=self.alpha, updates=self.updates)
+        tmp = os.path.join(d, 'actor.pt.tmp')
+        torch.save(state, tmp)
+        os.replace(tmp, os.path.join(d, POLICY_FILE))
+
+    def load_policy(self, path: str) -> dict:
+        """actor.pt(스냅샷) 또는 sac.pt(체크포인트)에서 액터만 읽어 numpy 사본까지 갱신. 정보 dict 를 돌려줌."""
+        sd, info = load_actor_state(path)
+        self.actor.load_state_dict(sd)
+        self.sync_policy()
+        return info
+
+
+POLICY_FILE = 'actor.pt'
+
+
+def load_actor_state(path: str):
+    """경로(파일 또는 폴더)에서 액터 state_dict 와 {file, updates, ...} 를 읽습니다.
+    폴더면 actor.pt 를 먼저, 없으면 sac.pt 를 찾습니다."""
+    if os.path.isdir(path):
+        for name in (POLICY_FILE, 'sac.pt'):
+            if os.path.exists(os.path.join(path, name)):
+                path = os.path.join(path, name)
+                break
+        else:
+            raise FileNotFoundError(f'{path} 에 {POLICY_FILE} 또는 sac.pt 가 없습니다')
+    state = torch.load(path, weights_only=False, map_location='cpu')
+    if 'actor' not in state:
+        raise ValueError(f'{path}: 액터 가중치가 없습니다')
+    info = dict(file=path, updates=state.get('updates'))
+    if 'alpha' in state:
+        info['alpha'] = state['alpha']
+    elif 'log_alpha' in state:
+        info['alpha'] = float(state['log_alpha'].exp())
+    return state['actor'], info

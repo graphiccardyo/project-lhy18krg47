@@ -7,6 +7,8 @@
 2. SAC: 버퍼 저장/복원, numpy 추론 = torch 액터, 체크포인트 왕복, 추론 시간, 작은 문제 학습
 3. env: 합성 D 줄로 결정 위상·실제 증분·종단/절단
 4. 트레이너: 가상시간 짧은 학습이 실제로 나아지는지, 일시정지/재개(사용자·고장 주입), --resume
+5. 스냅샷: 주기·best·수동(snapshot 명령, 일시정지 중 즉시), eval 명령(정기 일정과 별도), 옛 설정·체크포인트 호환
+6. rl.play: 가짜 보드로 --refs --pid / --hold, 지표·CSV·그림, STOP 으로 끝남, ABORT 중단
 시험 실행 폴더는 임시 폴더에 만들고 지웁니다.
 """
 from __future__ import annotations
@@ -230,6 +232,9 @@ def t_trainer(tmp, quick):
     tr2.wait(300)
     check('--resume 뒤 이어서 학습', tr2.status()['episode'] == 8 and tr2.status()['state'] == 'done')
 
+    t_snapshots(tmp)
+    t_play(tmp)
+
     if quick:
         return
     # 짧은 학습이 나아지는지: 무작위 워밍업 직후 평가 vs 40 에피소드 뒤
@@ -243,6 +248,152 @@ def t_trainer(tmp, quick):
     base = s['baseline']['rms_mean'] if s['baseline'] else float('nan')
     check('짧은 학습으로 평가 RMS 개선 (첫 평가 대비 40% 이상 감소)', len(ev) >= 3 and ev[-1] < 0.6 * ev[0],
           f'평가 RMS {ev}, PID {base:.3f}°, 가상 {s["elapsed_s"] / 60:.1f} 분 / 실제 {(time.time() - t0) / 60:.1f} 분')
+
+
+def _wait(tr, cond, timeout=120):
+    t0 = time.time()
+    while time.time() - t0 < timeout:
+        s = tr.status()
+        if cond(s):
+            return s
+        time.sleep(0.005)
+    return tr.status()
+
+
+SNAP_RUN = {}
+
+
+def t_snapshots(tmp):
+    print('== 5. 스냅샷·snapshot/eval 명령 (가상시간)', flush=True)
+    import json
+    import torch  # noqa: F401  (sac 로드)
+    from .config import from_dict, to_dict
+    from .sac import SAC, load_actor_state
+    tr, board, rd = _virtual_trainer(tmp, 'snap', 6, {'run.baseline_at_start': False, 'sac.warmup_steps': 500,
+                                                      'run.eval_every': 3, 'run.snapshot_every': 2})
+    tr.start()
+    _wait(tr, lambda s: s['state'] == 'episode')
+    tr.command('pause')
+    s = _wait(tr, lambda s: s['state'] == 'paused')
+    tr.command('snapshot')
+    s = _wait(tr, lambda s: any(m['kind'] == 'manual' for m in s['snapshots']), timeout=10)
+    check('일시정지 중 snapshot → 바로 저장', s['state'] == 'paused' and any(m['kind'] == 'manual' for m in s['snapshots']),
+          str([m['name'] for m in s['snapshots']]))
+    tr.command('eval')
+    s = tr.status()
+    tr.command('resume')
+    s = _wait(tr, lambda s: s['episode'] >= 1)
+    ok_cmd = tr.command('snapshot')[0] and tr.command('eval')[0] and not tr.command('bogus')[0]
+    tr.wait(300)
+    s = tr.status()
+    names = [m['name'] for m in s['snapshots']]
+    check('명령 snapshot·eval 받음 (모르는 명령은 거부)', ok_cmd)
+    check('주기 스냅샷 ep00002/4/6 + best + manual 2개', all(f'ep0000{k}' in names for k in (2, 4, 6)) and 'best' in names
+          and sum(n.startswith('manual_') for n in names) == 2, str(names))
+    man = [e for e in s['eval_scores'] if e.get('manual')]
+    reg = [e for e in s['eval_scores'] if not e.get('manual')]
+    check('수동 eval 은 정기 일정과 별도 (정기 ep 3, 수동 2회)', len(man) == 2 and [e['episode'] for e in reg] == [3]
+          and s['eval_rounds'] == 3, f'정기 {[e["episode"] for e in reg]}, 수동 {[e["episode"] for e in man]}')
+    best = min(e['rms_mean'] for e in s['eval_scores'])
+    check('best = 평가 최소 RMS, status.best_rms 일치', abs((s['best_rms'] or -1) - best) < 1e-9,
+          f'best_rms {s["best_rms"]}, 평가 {[e["rms_mean"] for e in s["eval_scores"]]}')
+    d6 = os.path.join(rd, 'checkpoints', 'ep00006')
+    with open(os.path.join(d6, 'meta.json'), encoding='utf-8') as f:
+        meta = json.load(f)
+    sz = os.path.getsize(os.path.join(d6, 'actor.pt'))
+    check('스냅샷 폴더 = actor.pt + meta.json (버퍼 없음, 작음)', sorted(os.listdir(d6)) == ['actor.pt', 'meta.json']
+          and sz < 200_000 and all(k in meta for k in ('episode', 'decisions', 'updates', 'eval_rms', 'time', 'kind')),
+          f'actor.pt {sz} B, meta {sorted(meta)}')
+    sd, info = load_actor_state(d6)
+    s2 = SAC(tr.sac.obs_dim, 1, tr.cfg.sac)
+    s2.load_policy(d6)
+    o = np.random.default_rng(0).normal(size=tr.sac.obs_dim)
+    check('ep00006 스냅샷 정책 = 학습 끝 정책 (결정적 행동)', abs(float(s2.policy.act(o, True)[0]) -
+                                                   float(tr.sac.policy.act(o, True)[0])) < 1e-9
+          and info['updates'] == s['updates'], f'갱신 {info["updates"]} / {s["updates"]}')
+    # 호환: 옛 config(새 키 없음)·옛 체크포인트(manual_evals 없음)
+    d = to_dict(tr.cfg)
+    d['run'].pop('snapshot_every')
+    cfg_old = from_dict(d)
+    ck = os.path.join(rd, 'checkpoint', 'sac.pt')
+    st = torch.load(ck, weights_only=False)
+    st['extra'].pop('manual_evals', None)
+    torch.save(st, ck)
+    tr3, _, _ = _virtual_trainer(tmp, 'snap', 6, {'run.baseline_at_start': False}, resume_dir=rd)
+    st3 = tr3.status()
+    check('호환: 옛 config 키 없음 → snapshot_every 50, 옛 체크포인트 → manual_evals 0, 스냅샷 목록 다시 읽음',
+          cfg_old.run.snapshot_every == 50 and tr3.manual_evals == 0 and st3['episode'] == 6
+          and len(st3['snapshots']) == len(names) and st3['best_rms'] == s['best_rms'])
+    tr3.rec.close()
+    SNAP_RUN['dir'] = rd
+
+
+def t_play(tmp):
+    print('== 6. rl.play (가짜 보드 가상시간)', flush=True)
+    import json
+    from .config import load_config
+    from .fake_board import FakeBoard
+    from .link import VirtualLink
+    from .play import Player, main as play_main, resolve_policy
+    rd = SNAP_RUN.get('dir')
+    if not rd:
+        check('rl.play 시험 (스냅샷 실행 폴더 필요)', False)
+        return
+    out = os.path.join(tmp, 'play1')
+    rc = play_main(['--fake', '--fast', '--ckpt', rd, '--snapshot', 'best', '--refs', '20', '30', '22', '--pid',
+                    '--dur', '6', '--out', out, '--quiet'])
+    with open(os.path.join(out, 'summary.json'), encoding='utf-8') as f:
+        sm = json.load(f)
+    eps = sm['episodes']
+    keys = ('rms', 'settled_mean_abs_e', 'settled_std_e', 'overshoot_pct', 'mean_pwm', 'pwm_std_settled')
+    check('play --refs --pid: RL·PID 에피소드, 지표, CSV, 그림', rc == 0 and [e['kind'] for e in eps] == ['rl', 'pid']
+          and all(e['metrics'].get(k) is not None for e in eps for k in keys)
+          and len(os.listdir(os.path.join(out, 'episodes'))) == 2 and os.path.exists(os.path.join(out, 'play.png'))
+          and not os.path.exists(os.path.join(out, 'checkpoint')),
+          ', '.join(f'{e["kind"]} RMS {e["metrics"]["rms"]:.2f}° OS {e["metrics"]["overshoot_pct"]:.0f}%' for e in eps))
+    with open(os.path.join(out, 'episodes', sorted(os.listdir(os.path.join(out, 'episodes')))[0]), encoding='utf-8') as f:
+        head = [f.readline() for _ in range(3)]
+    check('play CSV = 학습기 형식', 'type=RL' in head[0] and 'mode=play' in head[0] and head[1].startswith('# pid;')
+          and head[2].strip().endswith('ref_deg,miss,du,reward'))
+    pol, rdir, meta = resolve_policy(os.path.join(rd, 'checkpoints', 'ep00002'))
+    pol2, _, meta2 = resolve_policy(rd)
+    check('--ckpt 해석: 스냅샷 폴더 → 위쪽 config.json, 실행 폴더 → checkpoint/',
+          os.path.samefile(rdir, rd) and meta['name'] == 'ep00002' and pol2.endswith('checkpoint') and meta2 is None)
+    # 직접 Player: STOP 으로 끝나는지, ZERO 를 안 보내는지, ABORT 에서 멈추는지
+    cfg = load_config(os.path.join(rd, 'config.json'))
+    cfg.episode.dur_s = 4.0
+    board = FakeBoard(cfg.plant, seed=3)
+    vl = VirtualLink(board)
+    sent = []
+    orig = vl.send
+
+    def spy(line):
+        sent.append(line)
+        return orig(line)
+    vl.send = spy
+    pl = Player(cfg, lambda: vl, os.path.join(tmp, 'play2'), pol, [[25.0, 25.0, 25.0]], log=None, sim=True)
+    pl.start()
+    pl.wait(120)
+    vl.hb_enabled = False
+    for _ in range(20):          # 가상시간: 마지막 STOP 이 보드에 닿도록 몇 틱 진행
+        vl._advance()
+    m = pl.results[0]['metrics'] if pl.results else {}
+    check('play --hold: 끝나면 STOP, 모터 0, ZERO 없음, 갱신 없음', pl.end_reason is None and sent[-1] == 'STOP'
+          and board.u_out == 0 and not any(x.startswith('ZERO') for x in sent) and pl.sac.updates == 0
+          and pl.sac.buffer.n == 0, f'RMS {m.get("rms", float("nan")):.2f}°, 보낸 줄 {len(sent)}개')
+    board2 = FakeBoard(cfg.plant, seed=4)
+    vl2 = VirtualLink(board2)
+    pl2 = Player(cfg, lambda: vl2, os.path.join(tmp, 'play3'), pol, [[25.0, 30.0, 22.0]], log=None, sim=True)
+    orig_home = pl2._home
+
+    def home_then_lower_limit(h):
+        orig_home(h)
+        board2.alim = 500          # 에피소드 시작 직전 각도 한계 5° → EVT ABORT
+    pl2._home = home_then_lower_limit
+    pl2.start()
+    pl2.wait(120)
+    check('play 중 EVT ABORT → 중단·STOP·모터 0', pl2.end_reason is not None and 'ABORT' in pl2.end_reason
+          and board2.u_out == 0, pl2.end_reason)
 
 
 def main(argv=None):

@@ -188,6 +188,7 @@ class RunCfg:
     eval_refs: list = field(default_factory=lambda: [[20.0, 30.0, 22.0], [30.0, 18.0, 28.0], [25.0, 33.0, 16.0]])
     # 평가 시나리오 [home, r1, r2]: r1 은 시작부터, r2 는 에피소드 절반에서
     checkpoint_every: int = 10     # 에피소드마다
+    snapshot_every: int = 50       # 학습 에피소드 N 개마다 정책 스냅샷 checkpoints/epNNNNN/ (0 = 끔). 옛 config.json 에 없으면 이 값
     baseline_at_start: bool = True
     save_episode_csv: bool = True
     keep_episode_series: int = 3   # status() 에 넣을 최근 에피소드 시계열 개수

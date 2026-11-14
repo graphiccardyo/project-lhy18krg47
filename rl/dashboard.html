@@ -60,6 +60,13 @@ button:disabled { opacity: .35; cursor: not-allowed; }
 #b-pause { background: var(--btn-pause); }
 #b-resume { background: var(--btn-resume); }
 #b-stop { background: var(--btn-stop); }
+#b-snapshot, #b-evalnow { background: var(--c-eval); }
+.tablewrap { overflow-x: auto; }
+table.snaps { border-collapse: collapse; width: 100%; font-size: 13px; font-variant-numeric: tabular-nums; }
+table.snaps th, table.snaps td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+table.snaps th { color: var(--muted); font-weight: 600; }
+table.snaps td.num { text-align: right; }
+table.snaps tr.best td { font-weight: 700; color: var(--c-eval); }
 .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
 .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
 .card .k { color: var(--muted); font-size: 12px; }
@@ -106,6 +113,8 @@ pre#log { margin: 0; max-height: 260px; overflow: auto; background: var(--bg); b
       <button id="b-pause" data-cmd="pause">일시정지</button>
       <button id="b-resume" data-cmd="resume">재개</button>
       <button id="b-stop" data-cmd="stop">정지</button>
+      <button id="b-snapshot" data-cmd="snapshot" title="정책 스냅샷 (다음 에피소드 경계에서, 일시정지 중이면 바로)">지금 저장</button>
+      <button id="b-evalnow" data-cmd="eval" title="다음 에피소드 경계에서 평가 라운드 한 번">지금 평가</button>
     </div>
     <div id="cmdMsg" class="small muted" style="margin-top:6px">&nbsp;</div>
   </section>
@@ -151,6 +160,17 @@ pre#log { margin: 0; max-height: 260px; overflow: auto; background: var(--bg); b
         <span><i style="background:var(--c-eval);height:8px;width:8px;border-radius:50%"></i>평가 에피소드</span>
       </div>
     </div>
+  </section>
+
+  <section class="panel">
+    <h2 id="snap-title">스냅샷 (checkpoints/)</h2>
+    <div class="tablewrap">
+      <table class="snaps">
+        <thead><tr><th>이름</th><th>에피소드</th><th>평가 RMS [°]</th><th>시각</th></tr></thead>
+        <tbody id="snapBody"><tr><td colspan="4" class="muted">–</td></tr></tbody>
+      </table>
+    </div>
+    <div class="small muted" style="margin-top:4px">평가 RMS 가 ~ 로 시작하면 그 정책을 직접 평가한 값이 아니라 저장 시점의 최근 평가입니다. 굵은 줄 = best.</div>
   </section>
 
   <section class="panel">
@@ -211,6 +231,37 @@ pre#log { margin: 0; max-height: 260px; overflow: auto; background: var(--bg); b
     $('b-pause').disabled = !canPause;
     $('b-resume').disabled = !canResume;
     $('b-stop').disabled = !canStop;
+    var pend = (s && Array.isArray(s.pending)) ? s.pending : [];
+    $('b-snapshot').disabled = !canStop || pend.indexOf('snapshot') >= 0;
+    $('b-evalnow').disabled = !canStop || pend.indexOf('eval') >= 0;
+  }
+
+  function renderSnaps(s) {
+    var list = Array.isArray(s.snapshots) ? s.snapshots : [];
+    var body = $('snapBody');
+    body.textContent = '';
+    setText('snap-title', '스냅샷 (checkpoints/) — ' + list.length + '개' +
+      (isNum(s.best_rms) ? ', best ' + s.best_rms.toFixed(3) + '°' : '') +
+      ((Array.isArray(s.pending) && s.pending.length) ? ' · 대기 중: ' + s.pending.join(', ') : ''));
+    if (!list.length) {
+      var tr0 = document.createElement('tr'), td0 = document.createElement('td');
+      td0.colSpan = 4; td0.className = 'muted'; td0.textContent = '아직 없음';
+      tr0.appendChild(td0); body.appendChild(tr0); return;
+    }
+    // 최근 것이 위로
+    list.slice().reverse().forEach(function (m) {
+      var tr = document.createElement('tr');
+      if (m.name === 'best') tr.className = 'best';
+      var rms = isNum(m.eval_rms) ? m.eval_rms.toFixed(3) : (isNum(m.recent_eval_rms) ? '~' + m.recent_eval_rms.toFixed(3) : '–');
+      var tm = typeof m.time === 'string' ? m.time.replace('T', ' ') : '–';
+      [m.name, isNum(m.episode) ? String(m.episode) : '–', rms, tm].forEach(function (v, i) {
+        var td = document.createElement('td');
+        td.textContent = v;
+        if (i === 1 || i === 2) td.className = 'num';
+        tr.appendChild(td);
+      });
+      body.appendChild(tr);
+    });
   }
 
   function sendCommand(cmd) {
@@ -278,6 +329,7 @@ pre#log { margin: 0; max-height: 260px; overflow: auto; background: var(--bg); b
     logEl.textContent = lines.length ? lines.join('\n') : '(로그 없음)';
     logEl.scrollTop = logEl.scrollHeight;
 
+    renderSnaps(s);
     updateButtons(s);
   }
 

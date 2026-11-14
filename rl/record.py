@@ -3,7 +3,9 @@
     config.json          사용한 설정
     train_log.csv        에피소드마다 한 줄 (학습·평가·기준선)
     episodes/epNNNNN_<kind>.csv   에피소드 시계열 (PROTOCOL.md CSV 형식 + ref_deg,miss,du,reward)
-    checkpoint/          sac.pt, buffer.npz, trainer.json (--resume 으로 이어 하기)
+    checkpoint/          sac.pt, buffer.npz, trainer.json (--resume 으로 이어 하기, 덮어씀)
+    checkpoints/<이름>/  정책 스냅샷: actor.pt + meta.json (epNNNNN, best, manual_…)
+    play/<시각>/         rl.play 결과 (에피소드 CSV, summary.json, play.png)
     events.log           상태 변화·경고·오류
 """
 from __future__ import annotations
@@ -38,11 +40,12 @@ def new_run_dir(base: str | None = None, date: str | None = None) -> str:
 
 
 class Recorder:
-    def __init__(self, run_dir: str):
+    def __init__(self, run_dir: str, log_name: str = 'train_log.csv', checkpoint_dir: bool = True):
         self.dir = run_dir
         os.makedirs(os.path.join(run_dir, 'episodes'), exist_ok=True)
-        os.makedirs(os.path.join(run_dir, 'checkpoint'), exist_ok=True)
-        self.log_path = os.path.join(run_dir, 'train_log.csv')
+        if checkpoint_dir:
+            os.makedirs(os.path.join(run_dir, 'checkpoint'), exist_ok=True)
+        self.log_path = os.path.join(run_dir, log_name)
         new = not os.path.exists(self.log_path)
         self._logf = open(self.log_path, 'a', newline='', encoding='utf-8')
         self._log = csv.DictWriter(self._logf, fieldnames=LOG_FIELDS, extrasaction='ignore')

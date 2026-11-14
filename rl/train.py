@@ -6,7 +6,8 @@
     옵션: --config cfg.json  --resume data/<날짜>_rlN  --hours 2  --episodes 500  --bench  --randomize
           --latency-ms 7 9 (가짜 보드 명령 도착 지연)  --quiet
 
-실행 중 표준입력으로 p(일시정지) / r(재개) / q(정지) / s(상태) 를 입력할 수 있습니다. Ctrl+C = 정지.
+실행 중 표준입력으로 p(일시정지) / r(재개) / q(정지) / s(상태) / n(스냅샷) / e(지금 평가) 를 입력할 수 있습니다.
+Ctrl+C = 정지. 저장된 정책을 학습 없이 시험하려면 python -m rl.play (rl/play.py).
 """
 from __future__ import annotations
 
@@ -110,6 +111,10 @@ def main(argv=None):
                 print(tr.command('resume')[1], flush=True)
             elif c in ('q', 'stop', 'quit'):
                 print(tr.command('stop')[1], flush=True)
+            elif c in ('n', 'snapshot'):
+                print(tr.command('snapshot')[1], flush=True)
+            elif c in ('e', 'eval'):
+                print(tr.command('eval')[1], flush=True)
             elif c in ('s', 'status'):
                 st = tr.status()
                 for k in ('recent_episodes', 'learning_curve', 'log'):

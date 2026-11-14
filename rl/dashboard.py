@@ -6,7 +6,7 @@
 - 127.0.0.1 에만 바인드합니다(외부 노출 없음).
 - GET  /               → rl/dashboard.html
 - GET  /api/status     → trainer.status() (NaN/inf 는 null)
-- POST /api/command    본문 {"cmd": "start|pause|resume|stop"} → trainer.command(cmd) 결과 {ok, msg}
+- POST /api/command    본문 {"cmd": "start|pause|resume|stop|snapshot|eval"} → trainer.command(cmd) 결과 {ok, msg}
                        그 외 cmd 는 400. 모터를 움직일 수 있는 명령이므로 다른 호스트 이름(DNS 재바인딩)과
                        JSON 이 아닌 본문(교차 출처 폼 전송)은 거부합니다.
 """
@@ -20,7 +20,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit
 
 HTML_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'dashboard.html')
-COMMANDS = ('start', 'pause', 'resume', 'stop')
+COMMANDS = ('start', 'pause', 'resume', 'stop', 'snapshot', 'eval')
 ALLOWED_HOSTS = ('127.0.0.1', 'localhost', '[::1]')
 MAX_BODY = 4096
 
