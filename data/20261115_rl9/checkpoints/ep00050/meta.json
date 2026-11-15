@@ -1,0 +1,13 @@
+{
+ "name": "ep00050",
+ "kind": "periodic",
+ "episode": 50,
+ "decisions": 61938,
+ "updates": 59952,
+ "eval_rms": 2.1763,
+ "recent_eval_rms": 2.0072,
+ "time": "2026-11-15T05:22:29",
+ "elapsed_s": 2271.0,
+ "obs_dim": 8,
+ "alpha": 0.006389
+}
