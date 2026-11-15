@@ -56,7 +56,7 @@ python analysis/pid_design.py
 |---|---|
 | `index.html` | 레이아웃·스타일, 탭 ①–⑥ 마크업 |
 | `app.js` | 상태 `S`, 전송(`SerialLink` Web Serial / `SimLink`), 수신 분기 `onLine`, 기록·CSV, 실시간 그래프, 탭별 기능, `PERSIST` (localStorage 폼 저장) |
-| `sim.js` | `SimDevice`: 펌웨어 명령을 똑같이 흉내 내는 시뮬레이터. 플랜트 = 정적 특성 + 1차 지연 + 3.47 Hz 공진 + 지연 |
+| `sim.js` | `SimDevice`: 펌웨어 명령을 똑같이 흉내 내는 시뮬레이터. 플랜트 = 정적 특성 + 1차 지연·느린 경로(6 s) + 2.84 Hz 공진 + 지연 (11-13 기구 수정 후 모델) |
 | `sysid.js` | 계산 (ARX/Steiglitz–McBride, 정적 특성, 스텝 지표, 폐루프 시뮬레이션, 폐루프 지표, 릴레이 → Ku/Tu, Z-N). 브라우저와 Node 공용 |
 | `chart.js` | 의존성 없는 캔버스 차트 |
 
@@ -94,7 +94,7 @@ python analysis/pid_design.py
 
 ## 데이터 관리
 
-- 실험 CSV는 `data/<YYYYMMDD>_run<N>/`에 원본 그대로 넣습니다(수정 금지). 조건(전원 전압, 장착 변경 등)은 `data/README.md`에 한 줄로 남기세요.
+- 실험 CSV는 `data/<YYYYMMDD>_run<N>/`에 원본 그대로 넣습니다(수정 금지). 조건(펌웨어 설정, 장착 변경 등)은 `data/README.md`에 한 줄로 남기세요.
 - 분석 결과는 같은 폴더의 `analysis/`에 두고, 결론은 `analysis/REPORT.md`에 씁니다. 스크립트 출력은 다시 만들 수 있게 명령을 적어 두세요.
 - 큰 결론이 바뀌면 `docs/RESULTS.md`를 갱신합니다.
 

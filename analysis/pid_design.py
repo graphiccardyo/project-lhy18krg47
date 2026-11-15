@@ -1,8 +1,11 @@
 """Aeropendulum PID 설계·검토 (식별 모델 기반)
 
-플랜트 (data/20261106_run3/analysis/REPORT.md, PWM≈150 소신호):
-    P(s) = K e^(-Ls) / (T s + 1) · ωr² / (s² + 2ζr ωr s + ωr²)   [deg/PWM]
-    K = 0.12–0.21 (공칭 0.15, 세션 중 변동), T = 0.328 s, L = 0.016 s, ωr = 21.8 rad/s (3.47 Hz), ζr = 0.123
+플랜트 (2026-11-13 기구 수정 후, data/20261113_run1/analysis/REPORT.md, θ≈20°·PWM≈140 소신호):
+    P(s) = K e^(-Ls) / (T s + 1) · ωr² / (s² + 2ζr ωr s + ωr²)  +  Ks e^(-Ls) / (Tc s + 1)   [deg/PWM]
+    K = 0.14 (빠른 경로, 0.12–0.24: 20° 릴레이 0.15, 30° 릴레이 0.24), T = 0.319 s, L = 0.021 s,
+    ωr = 2π·2.84 rad/s (2.84 Hz), ζr = 0.136, 느린 경로 Ks = 0.05, Tc = 6 s (케이블·크리프 추정, 정적 이득 K + Ks ≈ 0.19)
+    폐루프 실측 검증: data/20261113_run3/analysis/REPORT.md
+    (기구 수정 전 11-06 모델: K 0.12–0.21, T 0.328, L 0.016, 3.47 Hz ζ 0.123, 느린 경로 없음)
 
 제어기 (펌웨어와 동일한 구조, Ts = 10 ms):
     u = ff + Kp·e + Ki·∫e dt − Kd·ω_f      (D 는 자이로 각속도 ω 를 10 Hz 저역통과해 측정값에 적용 → 기준 변화 시 킥 없음)
@@ -10,7 +13,7 @@
     출력 포화 [0, 255] + 적분 조건부 정지(anti-windup)
 
 평가:
-    강인성 = 최대 감도 Ms = max|1/(1+L)| (작을수록 강인, 1.4–2.0 권장) 를 K∈{0.12,0.15,0.21}, ωr ±10% 에서 계산
+    강인성 = 최대 감도 Ms = max|1/(1+L)| (작을수록 강인, 1.4–2.0 권장) 를 K∈{0.12,0.14,0.24}, ωr ±10% 에서 계산
     시간응답 = 기준 20°→25° 스텝을 1 ms 연속 플랜트 + 10 ms 이산 제어기로 시뮬레이션 (자이로 진동 잡음 포함)
 
 사용: python analysis/pid_design.py   → analysis/pid_design/ 아래 summary.txt, *.png
@@ -23,10 +26,11 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 plt.rcParams['font.family'] = ['Malgun Gothic', 'DejaVu Sans']; plt.rcParams['axes.unicode_minus'] = False
 
-T, L, WR, ZR, TS = 0.328, 0.016, 21.8, 0.123, 0.01
-K_SET = (0.12, 0.15, 0.21)
+T, L, WR, ZR, TS = 0.319, 0.021, 2 * np.pi * 2.84, 0.136, 0.01
+KS, TC = 0.05, 6.0                    # 느린 병렬 경로 Ks/(Tc s+1) (11-13 기구: 케이블·피벗 크리프로 추정)
+K_SET = (0.12, 0.14, 0.24)
 WR_SET = (0.9 * WR, WR, 1.1 * WR)
-K_NOM = 0.15
+K_NOM = 0.14
 TAU_D = 1 / (2 * np.pi * 10)          # D 항 저역통과 (10 Hz)
 OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'pid_design')
 W = np.geomspace(0.05, 300, 6000)
@@ -34,7 +38,7 @@ W = np.geomspace(0.05, 300, 6000)
 
 def plant(w, K=K_NOM, wr=WR):
     s = 1j * w
-    return K * np.exp(-s * L) / (T * s + 1) * wr ** 2 / (s ** 2 + 2 * ZR * wr * s + wr ** 2)
+    return (K / (T * s + 1) * wr ** 2 / (s ** 2 + 2 * ZR * wr * s + wr ** 2) + KS / (TC * s + 1)) * np.exp(-s * L)
 
 
 def notch(w, n):
@@ -67,8 +71,11 @@ def tf_poly(kp, ki, kd, n, K, wr):
     """폐루프 특성다항식용 개루프 분자/분모 (지연·ZOH 는 2차 Pade)"""
     tau = L + TS / 2
     pn, pd = [tau ** 2 / 12, -tau / 2, 1], [tau ** 2 / 12, tau / 2, 1]   # 2차 Pade 근사
-    Pn = np.polymul([K * wr ** 2], pn)
-    Pd = np.polymul(np.polymul([T, 1], [1, 2 * ZR * wr, wr ** 2]), pd)
+    Nf, Df = [K * wr ** 2], np.polymul([T, 1], [1, 2 * ZR * wr, wr ** 2])
+    if KS:                                                          # + KS/(TC s+1)
+        Nf = np.polyadd(np.polymul(Nf, [TC, 1]), np.polymul([KS], Df)); Df = np.polymul(Df, [TC, 1])
+    Pn = np.polymul(Nf, pn)
+    Pd = np.polymul(Df, pd)
     if ki:
         Cn = np.polyadd(np.polymul([kp, ki], [TAU_D, 1]), [kd, 0, 0])   # (kp s + ki)(τ s + 1) + kd s²
         Cd = np.polymul([1, 0], [TAU_D, 1])
@@ -99,8 +106,10 @@ def plant_ss(K, wr):
     return A, B, C
 
 
-def simulate(kp, ki, kd, n=None, K=K_NOM, wr=WR, r0=20.0, r1=25.0, tstep=1.0, tend=6.0, ff=150.0, noise=True, seed=1):
-    """기준 r0→r1 스텝. 플랜트는 운전점 편차 모델(θ0 = r0 에서 ff 로 평형이라고 가정)."""
+def simulate(kp, ki, kd, n=None, K=K_NOM, wr=WR, r0=20.0, r1=25.0, tstep=1.0, tend=6.0, ff=150.0, noise=True, seed=1,
+             ks=KS, tc=TC, umin=0.0, umax=255.0):
+    """기준 r0→r1 스텝. 플랜트는 운전점 편차 모델(θ0 = r0 에서 ff 로 평형이라고 가정).
+    ks/tc = 느린 병렬 경로, umin/umax = 펌웨어 출력 포화(폐루프 최소 PWM·최대 PWM)"""
     A, B, C = plant_ss(K, wr)
     dt = 0.001; Ad = linalg.expm(A * dt); Bd = np.linalg.solve(A, (Ad - np.eye(len(A))) @ B)
     nsub = int(TS / dt); nd = int(round(L / dt))
@@ -112,11 +121,11 @@ def simulate(kp, ki, kd, n=None, K=K_NOM, wr=WR, r0=20.0, r1=25.0, tstep=1.0, te
         zi = np.zeros(2)
     I = 0.0; omf = 0.0; ad = TS / (TAU_D + TS)
     tt, th, uu, rr = [], [], [], []
-    du = 0.0
+    du = 0.0; xs = 0.0; acs = np.exp(-dt / tc) if ks else 0.0
     for k in range(N):
         t = k * TS
-        theta = r0 + (C @ x).item()
-        omega = (C @ A @ x).item()
+        theta = r0 + (C @ x).item() + xs
+        omega = (C @ A @ x).item() + ((ks * ubuf[0] - xs) / tc if ks else 0.0)
         if noise:   # 자이로 진동(약 46 Hz, DLPF 후 σ≈25 °/s) + 각도 잡음
             theta += 0.04 * rng.standard_normal()
             omega += 25 * np.sqrt(2) * np.sin(2 * np.pi * 46.3 * t + 0.3) + 3 * rng.standard_normal()
@@ -126,13 +135,14 @@ def simulate(kp, ki, kd, n=None, K=K_NOM, wr=WR, r0=20.0, r1=25.0, tstep=1.0, te
         v = kp * e + I - kd * omf
         if n:
             vv, zi = signal.lfilter(nb, na, [v], zi=zi); v = float(vv[0])
-        u = ff + v; us = min(255.0, max(0.0, u))
+        u = ff + v; us = min(umax, max(umin, u))
         if u == us or (u > us and e < 0) or (u < us and e > 0):
             I += ki * e * TS
         du = us - ff
         for _ in range(nsub):
             ubuf.append(du); ui = ubuf.pop(0)
             x = Ad @ x + Bd * ui
+            if ks: xs = acs * xs + (1 - acs) * ks * ui
         tt.append(t); th.append(theta); uu.append(us); rr.append(r)
     return np.array(tt), np.array(th), np.array(uu), np.array(rr)
 
@@ -175,7 +185,7 @@ def main():
     lines = []
     say = lambda s='': (print(s), lines.append(s))  # noqa: E731
     NOTCH = (WR, 0.15, 0.7)
-    say('플랜트: K∈%s, T=%.3f s, L=%.0f ms, 공진 %.2f Hz ζ=%.3f;  강인성 평가: K×ωr(±10%%) 9개 조합' % (K_SET, T, L * 1e3, WR / 2 / np.pi, ZR))
+    say('플랜트: K∈%s, T=%.3f s, L=%.0f ms, 공진 %.2f Hz ζ=%.3f, 느린 경로 Ks=%.2f Tc=%.0f s;  강인성 평가: K×ωr(±10%%) 9개 조합' % (K_SET, T, L * 1e3, WR / 2 / np.pi, ZR, KS, TC))
     designs = {}
     Ti = T
     # (4) 폐루프 스텝 확인용 P 제어
@@ -190,12 +200,13 @@ def main():
         if g: designs['PID + 노치 (Td=%.2fTi)' % td_ratio] = ((g, g / Ti, g * Ti * td_ratio), NOTCH)
     # (6) Z-N (모델로 계산한 Ku, Tu)
     Ku, Tu = ziegler_nichols()
-    say('\nZ-N 한계 이득 (공칭 K=%.2f 모델): Ku = %.2f PWM/°, Tu = %.3f s (%.2f Hz) — 위상 −180° 가 3.5 Hz 구조 공진에서 일어남' % (K_NOM, Ku, Tu, 1 / Tu))
+    say('\nZ-N 한계 이득 (공칭 K=%.2f 모델): Ku = %.2f PWM/°, Tu = %.3f s (%.2f Hz) — 위상 −180° 가 %.2f Hz 구조 공진에서 일어남' % (K_NOM, Ku, Tu, 1 / Tu, WR / 2 / np.pi))
     zn = {'Z-N P': (0.5 * Ku, 0, 0), 'Z-N PI': (0.45 * Ku, 0.45 * Ku / (Tu / 1.2), 0), 'Z-N PID': (0.6 * Ku, 0.6 * Ku / (Tu / 2), 0.6 * Ku * Tu / 8)}
     for k, v in zn.items(): designs[k] = (v, None)
     designs['Z-N PID + 노치'] = (zn['Z-N PID'], NOTCH)
-    Ku2, _ = ziegler_nichols(0.21)
-    say('  (K=0.21 이면 Ku = %.2f — 이득 변동만으로 한계가 %.0f%% 줄어듦)' % (Ku2, 100 * (1 - Ku2 / Ku)))
+    designs['손튜닝 PID (11-13 프리셋)'] = ((0.9, 7.0, 0.02), None)     # data/20261113_run3/aeropend_settings_20261113.json
+    Ku2, _ = ziegler_nichols(K_SET[-1])
+    say('  (K=%.2f 이면 Ku = %.2f — 이득 변동만으로 한계가 %.0f%% 줄어듦)' % (K_SET[-1], Ku2, 100 * (1 - Ku2 / Ku)))
 
     say('\n%-24s %6s %6s %6s | %6s %6s %5s %6s %6s | %5s %5s %5s %5s %5s' % ('설계', 'Kp', 'Ki', 'Kd', '공칭Ms', '최악Ms', 'GM', 'PM', '안정', 'tr', 'OS%', 'ts', 'Δu', 'ess%'))
     sims = {}
@@ -208,7 +219,7 @@ def main():
         say('%-24s %6.2f %6.2f %6.3f | %6.2f %6.2f %5.1f %6.1f %6s | %5.2f %5.1f %5.2f %5.0f %5.1f' % (
             name, kp, ki, kd, rb['nom']['Ms'], rb['Ms'], rb['gm'], rb['pm'], '예' if rb['stable'] else '아니오',
             m['tr'], m['os'], m['ts'], np.abs(uu - 150).max(), m['ess']))
-    say('\n최악Ms·GM[dB]·PM[°]·안정 = 9개 플랜트 조합(K 0.12–0.21 × 공진 ±10%) 중 최악값. tr = 10–90% 상승시간[s], OS·ts(5%)는 최종값 기준, ess = 기준 대비 정상상태 오차[%].')
+    say('\n최악Ms·GM[dB]·PM[°]·안정 = 9개 플랜트 조합(K %.2f–%.2f × 공진 ±10%%) 중 최악값. tr = 10–90%% 상승시간[s], OS·ts(5%%)는 최종값 기준, ess = 기준 대비 정상상태 오차[%%].' % (K_SET[0], K_SET[-1]))
     say('최악Ms > 2 이거나 안정 = 아니오 이면 하드웨어 실험 전에 이득을 낮추세요. Δu = PWM 150 기준 최대 변화.')
     say('노치: fn=%.2f Hz, ζz=%.2f, ζp=%.2f (출력단 2차 필터). D 항: 자이로 ω 10 Hz LPF, 측정값에 적용.' % (NOTCH[0] / 2 / np.pi, NOTCH[1], NOTCH[2]))
 
@@ -217,11 +228,11 @@ def main():
     fig, axs = plt.subplots(2, 2, figsize=(13, 8))
     for name in [k for k in designs if not k.startswith('Z-N')]:
         t, th, uu, rr = sims[name]; axs[0, 0].plot(t, th, label=name)
-    axs[0, 0].plot(t, rr, 'k:', lw=1); axs[0, 0].set_title('설계별 스텝 응답 (공칭 K=0.15)'); axs[0, 0].set_ylabel('θ [°]'); axs[0, 0].legend(fontsize=7); axs[0, 0].grid(alpha=.3)
+    axs[0, 0].plot(t, rr, 'k:', lw=1); axs[0, 0].set_title('설계별 스텝 응답 (공칭 K=%.2f)' % K_NOM); axs[0, 0].set_ylabel('θ [°]'); axs[0, 0].legend(fontsize=7); axs[0, 0].grid(alpha=.3)
     for name in [k for k in designs if k.startswith('Z-N')]:
         t, th, uu, rr = sims[name]; axs[0, 1].plot(t, np.clip(th, 0, 45), label=name)
-    t, th, uu, rr = simulate(*designs['Z-N PID'][0], None, K=0.21, wr=0.9 * WR, tend=4.0)
-    axs[0, 1].plot(t, np.clip(th, 0, 45), 'm--', lw=1, label='Z-N PID, K=0.21·공진 −10% (불안정)')
+    t, th, uu, rr = simulate(*designs['Z-N PID'][0], None, K=K_SET[-1], wr=0.9 * WR, tend=4.0)
+    axs[0, 1].plot(t, np.clip(th, 0, 45), 'm--', lw=1, label='Z-N PID, K=%.2f·공진 −10%%' % K_SET[-1])
     axs[0, 1].plot(t, rr, 'k:', lw=1); axs[0, 1].set_title('Z-N 설계 (공칭 K, 점선 = 최악 조합)'); axs[0, 1].legend(fontsize=7); axs[0, 1].grid(alpha=.3); axs[0, 1].set_ylim(0, 45)
     (kp, ki, kd), n = designs[rec]
     for K in K_SET:
@@ -234,11 +245,11 @@ def main():
     fig, ax = plt.subplots(1, 2, figsize=(13, 4.5))
     for name in ['PI (Ti=T, Ms≤1.6)', rec, 'Z-N PID']:
         (kp, ki, kd), n = designs[name]
-        Lw = ctrl(W, kp, ki, kd, n) * plant(W, 0.21)
-        ax[0].loglog(W / 2 / np.pi, np.abs(Lw), label=name + ' (K=0.21)')
+        Lw = ctrl(W, kp, ki, kd, n) * plant(W, K_SET[-1])
+        ax[0].loglog(W / 2 / np.pi, np.abs(Lw), label=name + ' (K=%.2f)' % K_SET[-1])
         ax[1].semilogx(W / 2 / np.pi, 20 * np.log10(np.abs(1 / (1 + Lw))), label=name)
     ax[0].axhline(1, color='k', lw=.6); ax[0].set_xlabel('Hz'); ax[0].set_title('개루프 |L|'); ax[0].grid(alpha=.3, which='both'); ax[0].legend(fontsize=7); ax[0].set_xlim(0.01, 30)
-    ax[1].axhline(20 * np.log10(1.6), color='r', ls='--', lw=.8, label='Ms=1.6'); ax[1].set_xlabel('Hz'); ax[1].set_title('감도 |S| [dB] (K=0.21)'); ax[1].grid(alpha=.3, which='both'); ax[1].legend(fontsize=7); ax[1].set_xlim(0.01, 30); ax[1].set_ylim(-40, 20)
+    ax[1].axhline(20 * np.log10(1.6), color='r', ls='--', lw=.8, label='Ms=1.6'); ax[1].set_xlabel('Hz'); ax[1].set_title('감도 |S| [dB] (K=%.2f)' % K_SET[-1]); ax[1].grid(alpha=.3, which='both'); ax[1].legend(fontsize=7); ax[1].set_xlim(0.01, 30); ax[1].set_ylim(-40, 20)
     fig.tight_layout(); fig.savefig(os.path.join(OUT, 'loop_shapes.png'), dpi=85); plt.close(fig)
     with open(os.path.join(OUT, 'summary.txt'), 'w', encoding='utf-8') as f:
         f.write('\n'.join(lines) + '\n')

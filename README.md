@@ -12,23 +12,24 @@
 | 목표 | 내용 | 상태 | 어디에 |
 |---|---|---|---|
 | 1 | 개루프 시험: 입력 PWM ↔ 출력 각도 (정적 특성) | ✅ 데이터·분석 완료 | UI ③, [data/20261106_run2](data/20261106_run2/analysis/REPORT.md) |
-| 2 | 개루프 시험: 스텝, 스윕 사인 (+PRBS) | ✅ 데이터·분석 완료 | UI ④, [data/20261106_run3](data/20261106_run3/analysis/REPORT.md) |
-| 3 | 전달함수 추정 → 검증 | ✅ 모델 확정 (아래) | UI ⑤, `matlab/`, `analysis/` |
-| 4 | 폐루프 스텝 응답 | 🟡 구현·시뮬레이터 검증, **하드웨어 시험 전** | UI ⑥ |
-| 5 | PID 설계·시험 | 🟡 설계 완료(PI + 노치 권장), **하드웨어 시험 전** | UI ⑥, [analysis/pid_design](analysis/pid_design/REPORT.md) |
-| 6 | Z-N 설계·시험 | 🟡 릴레이 시험 구현, **하드웨어 시험 전** | UI ⑥ (릴레이) |
-| 7 | 강화학습 제어기 | ⬜ 시작 전 | — |
+| 2 | 개루프 시험: 스텝, 스윕 사인 (+PRBS) | ✅ 데이터·분석 완료 (11-13 기구 수정 후 다시 함) | UI ④, [data/20261113_run1](data/20261113_run1/analysis/REPORT.md) |
+| 3 | 전달함수 추정 → 검증 | ✅ 모델 확정 (아래, 폐루프 실측으로 검증). 11-15부터 재식별 진행 중 | UI ⑤, `matlab/`, `analysis/` |
+| 4 | 폐루프 스텝 응답 | 🟡 하드웨어 시험 일부 (P, PI, 손튜닝 PID) | UI ⑥, [data/20261113_run2](data/20261113_run2/analysis/REPORT.md) |
+| 5 | PID 설계·시험 | 🟡 손튜닝 PID 시험함, 새 모델 설계(PI + 2.84 Hz 노치)는 **하드웨어 시험 전** | UI ⑥, [analysis/pid_design](analysis/pid_design/REPORT.md) |
+| 6 | Z-N 설계·시험 | 🟡 릴레이·Z-N PID 하드웨어 시험함 (30°에서 진동) | UI ⑥, [data/20261113_run3](data/20261113_run3/analysis/REPORT.md) |
+| 7 | 강화학습 제어기 | 🟡 실기 SAC 학습 중: 평가 RMS 1.9° (PID 2.4°), 정상상태 편향은 아직 PID보다 큼 | `rl/`, [firmware/aeropendulum_rl](firmware/aeropendulum_rl/aeropendulum_rl.ino), [data/20261115_rl8](data/20261115_rl8/) |
 
 현재 결과 요약은 [docs/RESULTS.md](docs/RESULTS.md)에 있습니다.
 
-### 식별된 플랜트 (PWM ≈ 150, θ ≈ 20°)
+### 식별된 플랜트 (2026-11-13 기구 수정 후, PWM ≈ 140, θ ≈ 20°)
 
 ```
-G(s) = Δθ/ΔPWM = K · e^(−0.016 s) / (0.328 s + 1) · 21.8² / (s² + 5.37 s + 21.8²)     [deg/PWM]
-       K = 0.12–0.21 (공칭 0.15, 세션 중 변동),  3.47 Hz 구조 공진(ζ ≈ 0.12)
+G(s) = Δθ/ΔPWM = [ K/(0.319 s + 1) · 17.8²/(s² + 4.85 s + 17.8²) + 0.05/(6 s + 1) ] · e^(−0.021 s)     [deg/PWM]
+       K ≈ 0.14 (20° 0.15, 30° 0.24),  2.84 Hz 구조 공진(ζ ≈ 0.14),  느린 경로 0.05/(6 s+1)
+수정 전(11-06): K · e^(−0.016 s) / (0.328 s + 1) · 21.8² / (s² + 5.37 s + 21.8²), 공진 3.47 Hz
 ```
 
-권장 제어기는 **PI + 3.47 Hz 노치**(Kp 7.85, Ki 23.9)입니다. 모델 예측은 상승 0.4 s, 오버슈트 1% 미만이고, K 0.12–0.21 전체에서 최대 감도 Ms ≤ 1.6입니다.
+새 모델의 권장 제어기는 **PI + 2.84 Hz 노치**(Kp 5.40, Ki 16.9, 하드웨어 미시험)입니다. 모델 예측은 상승 0.63 s, 오버슈트 1%이고, K 0.12–0.24 전체에서 최대 감도 Ms ≤ 1.6입니다. 하드웨어에서 시험한 손튜닝 PID(Kp 0.9, Ki 7, Kd 0.02)는 상승 1.5 s이고 모델과 θ 93–94% 일치합니다.
 
 ## 빠른 시작
 
@@ -45,6 +46,8 @@ G(s) = Δθ/ΔPWM = K · e^(−0.016 s) / (0.328 s + 1) · 21.8² / (s² + 5.37 
 
 ```
 firmware/aeropendulum_lab/   우노 펌웨어 (센서·Madgwick·보정·가진 신호·PID·안전장치) — 단일 .ino
+firmware/aeropendulum_rl/    강화학습용 펌웨어 (PC 가 보낸 PWM 증분 적용 + 안전장치·PID 복귀)
+rl/                          Python SAC 실기 학습기, 가짜 보드, 정책 시험·분기·IMU 점검, 웹 대시보드
 lab/                         실험 UI (index.html + app.js, 시뮬레이터 sim.js, 식별 계산 sysid.js, 차트 chart.js)
 Start-Lab.cmd                Edge 로 lab/index.html 열기
 analysis/                    Python 분석 (데이터 진단, 주파수응답, 모델 맞춤, PID 설계)
@@ -63,6 +66,7 @@ AGENTS.md                    AI 에이전트(코딩 보조)용 작업 지침
 | [docs/HARDWARE.md](docs/HARDWARE.md) | 조립·배선 | 부품, 배선, 전원, 센서 장착, 주의사항 |
 | [docs/RESULTS.md](docs/RESULTS.md) | 보고서·발표 | 실험 데이터, 식별 모델, PID 설계 결과와 근거 |
 | [docs/PROTOCOL.md](docs/PROTOCOL.md) | 개발·분석 | 시리얼 명령/출력 형식, CSV 형식, EEPROM |
+| [rl/README.md](rl/README.md) · [docs/RL_PROTOCOL.md](docs/RL_PROTOCOL.md) | 강화학습 | 학습기 사용법·설정·안전, RL 펌웨어 프로토콜 |
 | [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | 코드 수정하는 팀원 | 도구, 빌드·시험, 코드 구조, 기능 추가 절차, 제약 |
 | [AGENTS.md](AGENTS.md) | AI 에이전트 | 저장소 지도, 지켜야 할 규칙, 검증 방법 |
 

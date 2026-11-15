@@ -1,0 +1,67 @@
+{
+ "policy": "C:\\Users\\avalo\\Desktop\\aeropendulum-main\\data\\20261114_rl1\\checkpoint",
+ "run_dir": "C:\\Users\\avalo\\Desktop\\aeropendulum-main\\data\\20261114_rl1",
+ "snapshot": null,
+ "policy_info": {
+  "file": "C:\\Users\\avalo\\Desktop\\aeropendulum-main\\data\\20261114_rl1\\checkpoint\\sac.pt",
+  "updates": 128905,
+  "alpha": 0.00490903202444315
+ },
+ "link": "COM4",
+ "fw": "AEROPEND_RL 1.0",
+ "sim": false,
+ "bench": false,
+ "scenarios": [
+  [
+   25.0,
+   25.0,
+   25.0
+  ]
+ ],
+ "repeat": 1,
+ "dur_s": 20.0,
+ "pid": false,
+ "settle_s": 3.0,
+ "time": "2026-11-14T22:49:14",
+ "end_reason": null,
+ "episodes": [
+  {
+   "run": 0,
+   "kind": "rl",
+   "scenario": 0,
+   "status": "done",
+   "home": 25.0,
+   "r1": 25.0,
+   "r2": 25.0,
+   "miss": 0,
+   "fallback": false,
+   "csv": "ep00001_play.csv",
+   "metrics": {
+    "samples": 2000,
+    "rms": 23.45358772554852,
+    "settled_mean_abs_e": 23.45590588235294,
+    "settled_std_e": 0.01838005538582911,
+    "settled_mean_e": 23.45590588235294,
+    "overshoot_deg": null,
+    "overshoot_pct": null,
+    "mean_pwm": 209.252,
+    "pwm_std_settled": 0.0,
+    "mean_abs_dpwm": 0.03801900950475238
+   }
+  }
+ ],
+ "aggregate": {
+  "rl": {
+   "episodes": 1,
+   "fallbacks": 0,
+   "miss": 0,
+   "rms": 23.4536,
+   "settled_mean_abs_e": 23.4559,
+   "settled_std_e": 0.0184,
+   "overshoot_deg": null,
+   "overshoot_pct": null,
+   "mean_pwm": 209.252,
+   "pwm_std_settled": 0.0
+  }
+ }
+}

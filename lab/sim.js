@@ -1,15 +1,17 @@
 // 펌웨어 프로토콜을 흉내 내는 에어로펜듈럼 시뮬레이터 (하드웨어 없이 UI·PID 연습/검증용)
-// 플랜트 = 2026-11-06 식별 결과 (data/20261106_run3/analysis/REPORT.md):
-//   θss(PWM) = 정적 특성(run2 계단 평균, 운전점 PWM 150 기울기 ≈ 0.2 °/PWM)
-//   동특성   = 지연 16 ms → 1차 지연 T = 0.328 s → 구조 공진 3.47 Hz, ζ = 0.123
+// 플랜트 = 2026-11-13 기구 수정 후 식별 결과 (data/20261113_run1/analysis/REPORT.md, 폐루프 검증 run3):
+//   θss(PWM) = 정적 특성(11-13 계단 2회 평균, PWM 140–160 기울기 ≈ 0.2 °/PWM)
+//   동특성   = 지연 21 ms → [74%: 1차 지연 T = 0.319 s] + [26%: 느린 경로 Tc = 6 s (케이블·크리프)] → 구조 공진 2.84 Hz, ζ = 0.136
+//   (소신호로 보면 빠른 이득 K ≈ 0.14 + 느린 이득 Ks ≈ 0.05 °/PWM)
+//   기구 수정 전(11-06): 지연 16 ms, T 0.328 s, 공진 3.47 Hz ζ 0.123, 느린 경로 없음, 계단 지도 PWM 250 → 40°
 // + 저속 정지(PWM < 30)와 재기동 지연(멈춘 뒤 PWM ≥ 45 에서 0.15 s) — 실제 장치의 관찰을 흉내 낸 값
 // 입력 u 는 펌웨어와 같이 PWM 카운트(0..255). 폐루프(PID/노치/CLSTEP/RELAY/REF)도 펌웨어와 같은 식으로 계산.
 (function (root) {
   'use strict';
 
-  const MAP = [[0, 0], [20, 0], [50, 5.4], [60, 6.75], [70, 7.65], [80, 9.4], [90, 10.55], [100, 11.95], [110, 13.4], [120, 15.1],
-    [130, 17.25], [140, 19.6], [150, 21.75], [160, 23.5], [170, 25.3], [180, 26.9], [190, 28.45], [200, 30.25], [210, 31.55],
-    [220, 33.15], [230, 35.3], [240, 37.5], [250, 40.0], [255, 41.0]];
+  const MAP = [[0, 0], [30, 0], [50, 1.95], [60, 3.0], [70, 4.8], [80, 6.75], [90, 8.7], [100, 11.35], [110, 13.55], [120, 15.3],
+    [130, 17.1], [140, 18.9], [150, 20.8], [160, 22.9], [170, 25.6], [180, 27.6], [190, 29.95], [200, 32.25], [210, 35.2],
+    [220, 38.3], [230, 42.1], [240, 47.25], [250, 53.3], [255, 56.5]];
   function thetaSS(pwm) {
     const u = Math.max(0, Math.min(255, Math.abs(pwm)));
     for (let i = 1; i < MAP.length; i++) {
@@ -21,10 +23,10 @@
   class SimDevice {
     constructor() {
       this.onLine = null;
-      this.p = { T: 0.328, L: 0.016, wr: 21.8, zr: 0.123, noise: 0.04, mount: 3.0, gain: 1.0,
+      this.p = { T: 0.319, L: 0.021, wr: 2 * Math.PI * 2.84, zr: 0.136, slow: 0.26, Tc: 6.0, noise: 0.04, mount: 3.0, gain: 1.0,
         stallPwm: 30, startPwm: 45, startDelay: 0.15 };   // 모터 정지·재기동: 30 미만이면 멈추고, 멈춘 뒤엔 45 이상에서 0.15 s 지나야 다시 추력
       this.motorOn = false; this.startT = 0;
-      this.x1 = 0; this.y = 0; this.yd = 0; this.ubuf = new Array(16).fill(0);
+      this.x1 = 0; this.xs = 0; this.y = 0; this.yd = 0; this.ubuf = new Array(Math.round(this.p.L * 1000)).fill(0);
       this.cfg = { axis: 'X', sign: '+', beta: 20, dlpf: 4, div: 2, umax: 255, alim: 12000, rev: 0, bench: 0, cal: 0, zero: 0 };
       this.defaultAo = [-0.017059, -0.022036, 0.147525];
       this.calv = { gb: [0, 0, 0], ao: this.defaultAo.slice(), g0: [0, 0, 1] };
@@ -240,8 +242,8 @@
       return u;
     }
 
-    physics(dt) {   // 1 ms 단위: 지연 → 1차 지연(정적 특성 목표) → 공진
-      const { T, wr, zr, gain } = this.p;
+    physics(dt) {   // 1 ms 단위: 지연 → 1차 지연 + 느린 경로(정적 특성 목표를 나눠 가짐) → 공진
+      const { T, Tc, slow, wr, zr, gain } = this.p;
       this.ubuf.push(this.cfg.bench ? 0 : this.uOut);
       const ud = this.ubuf.shift();
       // 저속 정지와 재기동 지연 (실제 모터: 일정 PWM 아래에서 멈추고, 다시 돌기까지 시간이 걸림)
@@ -250,8 +252,9 @@
       else if (Math.abs(ud) >= P.startPwm) { this.startT += dt; if (this.startT >= P.startDelay) { this.motorOn = true; this.startT = 0; } }
       else this.startT = 0;
       const target = this.motorOn ? gain * thetaSS(ud) : 0;
-      this.x1 += (target - this.x1) * dt / T;
-      this.yd += (wr * wr * (this.x1 - this.y) - 2 * zr * wr * this.yd) * dt;
+      this.x1 += ((1 - slow) * target - this.x1) * dt / T;
+      this.xs += (slow * target - this.xs) * dt / Tc;
+      this.yd += (wr * wr * (this.x1 + this.xs - this.y) - 2 * zr * wr * this.yd) * dt;
       this.y += this.yd * dt;
     }
 

@@ -1,0 +1,637 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>에어로펜듈럼 RL 학습 대시보드</title>
+<style>
+:root {
+  --bg: #f5f6f8; --panel: #ffffff; --fg: #1d2330; --muted: #6b7385; --line: #dde1e8;
+  --grid: #e7eaf0; --c-theta: #1f6feb; --c-ref: #d1242f; --c-pwm: #9a6700; --c-train: #2da44e;
+  --c-eval: #8250df; --c-base: #6b7385;
+  --ok: #1a7f37; --warn: #9a6700; --bad: #cf222e; --info: #0969da;
+  --btn-start: #1a7f37; --btn-pause: #9a6700; --btn-resume: #0969da; --btn-stop: #cf222e;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f1218; --panel: #171c25; --fg: #e6e9ef; --muted: #9aa3b5; --line: #2a3140;
+    --grid: #252c3a; --c-theta: #58a6ff; --c-ref: #ff7b72; --c-pwm: #e3b341; --c-train: #56d364;
+    --c-eval: #bc8cff; --c-base: #9aa3b5;
+    --ok: #3fb950; --warn: #e3b341; --bad: #ff7b72; --info: #58a6ff;
+    --btn-start: #238636; --btn-pause: #9e6a03; --btn-resume: #1f6feb; --btn-stop: #da3633;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f1218; --panel: #171c25; --fg: #e6e9ef; --muted: #9aa3b5; --line: #2a3140;
+  --grid: #252c3a; --c-theta: #58a6ff; --c-ref: #ff7b72; --c-pwm: #e3b341; --c-train: #56d364;
+  --c-eval: #bc8cff; --c-base: #9aa3b5;
+  --ok: #3fb950; --warn: #e3b341; --bad: #ff7b72; --info: #58a6ff;
+  --btn-start: #238636; --btn-pause: #9e6a03; --btn-resume: #1f6feb; --btn-stop: #da3633;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); background: var(--bg);
+  font: 14px/1.5 "Malgun Gothic", "Apple SD Gothic Neo", system-ui, sans-serif; }
+main { max-width: 1200px; margin: 0 auto; padding: 16px; display: grid; gap: 12px; }
+h1 { font-size: 18px; margin: 0; }
+h2 { font-size: 14px; margin: 0 0 8px; color: var(--muted); font-weight: 600; }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; min-width: 0; }
+.row { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
+.head { justify-content: space-between; }
+.muted { color: var(--muted); }
+.small { font-size: 12px; }
+.mono { font-family: Consolas, "D2Coding", monospace; word-break: break-all; }
+.badge { display: inline-block; padding: 2px 10px; border-radius: 999px; font-weight: 700; color: #fff; background: var(--muted); }
+.st-waiting { background: var(--info); }
+.st-connecting, .st-baseline, .st-homing, .st-episode, .st-eval, .st-updating, .st-stopping { background: var(--ok); }
+.st-resting { background: var(--info); }
+.st-paused { background: var(--warn); }
+.st-done { background: var(--muted); }
+.st-error { background: var(--bad); }
+.conn { font-weight: 700; }
+.conn.ok { color: var(--ok); } .conn.bad { color: var(--bad); }
+.alert { border-radius: 8px; padding: 8px 12px; border: 1px solid; font-weight: 600; }
+.alert.warn { border-color: var(--warn); color: var(--warn); }
+.alert.bad { border-color: var(--bad); color: var(--bad); }
+.alert[hidden] { display: none; }
+.btns { display: flex; flex-wrap: wrap; gap: 8px; }
+button { font: inherit; font-weight: 700; border: 0; border-radius: 8px; padding: 10px 18px; color: #fff; cursor: pointer; min-width: 96px; }
+button:disabled { opacity: .35; cursor: not-allowed; }
+#b-start { background: var(--btn-start); }
+#b-pause { background: var(--btn-pause); }
+#b-resume { background: var(--btn-resume); }
+#b-stop { background: var(--btn-stop); }
+#b-snapshot, #b-evalnow { background: var(--c-eval); }
+.tablewrap { overflow-x: auto; }
+table.snaps { border-collapse: collapse; width: 100%; font-size: 13px; font-variant-numeric: tabular-nums; }
+table.snaps th, table.snaps td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+table.snaps th { color: var(--muted); font-weight: 600; }
+table.snaps td.num { text-align: right; }
+table.snaps tr.best td { font-weight: 700; color: var(--c-eval); }
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+.card .k { color: var(--muted); font-size: 12px; }
+.card .v { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; word-break: break-word; }
+.card .s { color: var(--muted); font-size: 12px; }
+.charts { display: grid; grid-template-columns: 1fr; gap: 12px; }
+@media (min-width: 900px) { .charts { grid-template-columns: 1fr 1fr; } .charts .wide { grid-column: 1 / -1; } }
+canvas { width: 100%; height: 260px; display: block; }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 12px; color: var(--muted); margin-top: 4px; }
+.legend i { display: inline-block; width: 14px; height: 3px; vertical-align: middle; margin-right: 4px; border-radius: 2px; }
+pre#log { margin: 0; max-height: 260px; overflow: auto; background: var(--bg); border: 1px solid var(--line);
+  border-radius: 8px; padding: 8px 10px; font: 12px/1.45 Consolas, "D2Coding", monospace; white-space: pre-wrap; word-break: break-all; }
+@media (max-width: 480px) { main { padding: 12px; } .card .v { font-size: 17px; } button { flex: 1 1 40%; } }
+</style>
+</head>
+<body>
+<main>
+  <section class="panel row head">
+    <h1>에어로펜듈럼 RL 학습 대시보드</h1>
+    <div class="row">
+      <span id="conn" class="conn bad">연결 확인 중…</span>
+      <span class="muted small" id="clock">–</span>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="row head">
+      <div class="row">
+        <span id="state" class="badge">–</span>
+        <span id="detail">–</span>
+      </div>
+    </div>
+    <div id="pausedBox" class="alert warn" hidden style="margin-top:10px"></div>
+    <div id="errorBox" class="alert bad" hidden style="margin-top:10px"></div>
+    <div class="row small" style="margin-top:10px">
+      <span class="muted">연결</span> <span id="link" class="mono">–</span>
+      <span class="muted">펌웨어</span> <span id="fw" class="mono">–</span>
+    </div>
+    <div class="row small" style="margin-top:4px">
+      <span class="muted">실행 폴더</span> <span id="runDir" class="mono">–</span>
+    </div>
+    <div class="btns" style="margin-top:12px">
+      <button id="b-start" data-cmd="start">시작</button>
+      <button id="b-pause" data-cmd="pause">일시정지</button>
+      <button id="b-resume" data-cmd="resume">재개</button>
+      <button id="b-stop" data-cmd="stop">정지</button>
+      <button id="b-snapshot" data-cmd="snapshot" title="정책 스냅샷 (다음 에피소드 경계에서, 일시정지 중이면 바로)">지금 저장</button>
+      <button id="b-evalnow" data-cmd="eval" title="다음 에피소드 경계에서 평가 라운드 한 번">지금 평가</button>
+    </div>
+    <div id="cmdMsg" class="small muted" style="margin-top:6px">&nbsp;</div>
+  </section>
+
+  <section class="cards">
+    <div class="card"><div class="k">학습 에피소드</div><div class="v" id="c-episode">–</div><div class="s" id="c-epLeft">–</div></div>
+    <div class="card"><div class="k">평가 회차</div><div class="v" id="c-eval">–</div></div>
+    <div class="card"><div class="k">결정 수</div><div class="v" id="c-decisions">–</div><div class="s" id="c-warm">–</div></div>
+    <div class="card"><div class="k">갱신 수</div><div class="v" id="c-updates">–</div><div class="s" id="c-buffer">–</div></div>
+    <div class="card"><div class="k">경과 시간</div><div class="v" id="c-elapsed">–</div><div class="s" id="c-remain">–</div></div>
+    <div class="card"><div class="k">모터 가동 시간</div><div class="v" id="c-motor">–</div><div class="s" id="c-rest">–</div></div>
+    <div class="card"><div class="k">FALLBACK</div><div class="v" id="c-fb">–</div></div>
+    <div class="card"><div class="k">ABORT</div><div class="v" id="c-abort">–</div></div>
+    <div class="card"><div class="k">miss 누적</div><div class="v" id="c-miss">–</div></div>
+    <div class="card"><div class="k">평균 PWM (직전 에피소드)</div><div class="v" id="c-pwm">–</div></div>
+    <div class="card"><div class="k">SAC α</div><div class="v" id="c-alpha">–</div></div>
+    <div class="card" id="card-gap"><div class="k">자세 추정 θ − θacc</div><div class="v" id="c-gap">–</div><div class="s" id="c-gapS">–</div></div>
+  </section>
+
+  <section class="charts">
+    <div class="panel">
+      <h2 id="g1-title">최근 에피소드 θ · 기준 · PWM</h2>
+      <canvas id="g1"></canvas>
+      <div class="legend">
+        <span><i style="background:var(--c-theta)"></i>θ [°]</span>
+        <span><i style="background:var(--c-ref);opacity:.8"></i>기준 ref [°] (점선)</span>
+        <span><i style="background:var(--c-pwm)"></i>PWM (오른쪽 축)</span>
+      </div>
+    </div>
+    <div class="panel">
+      <h2>학습 곡선 — RMS 오차 [°]</h2>
+      <canvas id="g2"></canvas>
+      <div class="legend">
+        <span><i style="background:var(--c-train);height:8px;width:8px;border-radius:50%"></i>학습 에피소드</span>
+        <span><i style="background:var(--c-eval)"></i>평가 평균</span>
+        <span><i style="background:var(--c-base)"></i>PID 기준선 (점선)</span>
+      </div>
+    </div>
+    <div class="panel">
+      <h2>정상상태 편향 |창 평균 e| [°] — 각 구간 마지막 창</h2>
+      <canvas id="g4"></canvas>
+      <div class="legend">
+        <span><i style="background:var(--c-train);height:8px;width:8px;border-radius:50%"></i>학습 에피소드</span>
+        <span><i style="background:var(--c-eval)"></i>평가 편향</span>
+        <span><i style="background:var(--c-eval);opacity:.5"></i>평가 리플 σ(e) (점선)</span>
+        <span><i style="background:var(--c-base)"></i>PID 편향 (회색 점·점선 = 최근)</span>
+      </div>
+      <div id="g4-note" class="small muted" style="margin-top:4px">&nbsp;</div>
+    </div>
+    <div class="panel">
+      <h2>에피소드별 평균 PWM — 같은 각도 유지에 드는 PWM 추이</h2>
+      <canvas id="g3"></canvas>
+      <div class="legend">
+        <span><i style="background:var(--c-train);height:8px;width:8px;border-radius:50%"></i>학습 에피소드</span>
+        <span><i style="background:var(--c-eval);height:8px;width:8px;border-radius:50%"></i>평가 에피소드</span>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2 id="snap-title">스냅샷 (checkpoints/)</h2>
+    <div class="tablewrap">
+      <table class="snaps">
+        <thead><tr><th>이름</th><th>에피소드</th><th>평가 RMS [°]</th><th>시각</th></tr></thead>
+        <tbody id="snapBody"><tr><td colspan="4" class="muted">–</td></tr></tbody>
+      </table>
+    </div>
+    <div class="small muted" style="margin-top:4px">평가 RMS 가 ~ 로 시작하면 그 정책을 직접 평가한 값이 아니라 저장 시점의 최근 평가입니다. 굵은 줄 = best.</div>
+  </section>
+
+  <section class="panel">
+    <h2>최근 로그</h2>
+    <pre id="log">–</pre>
+  </section>
+</main>
+
+<script>
+(function () {
+  'use strict';
+  var POLL_MS = 1000;
+  var last = null;          // 마지막으로 받은 status
+  var lastOk = 0;           // 마지막 성공 시각(ms)
+  var busy = false;
+
+  function $(id) { return document.getElementById(id); }
+  function isNum(v) { return typeof v === 'number' && isFinite(v); }
+  function fmt(v, d) {
+    if (!isNum(v)) return '–';
+    return v.toFixed(d === undefined ? 0 : d);
+  }
+  function fmtTime(s) {
+    if (!isNum(s)) return '–';
+    s = Math.max(0, Math.round(s));
+    var h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), x = s % 60;
+    function p(n) { return n < 10 ? '0' + n : '' + n; }
+    return h > 0 ? h + ':' + p(m) + ':' + p(x) : p(m) + ':' + p(x);
+  }
+  function cssVar(name, fallback) {
+    var v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    return v || fallback;
+  }
+  function setText(id, text) { $(id).textContent = text; }
+
+  var STATE_KO = {
+    waiting: '대기', connecting: '연결 중', baseline: 'PID 기준선', homing: '복귀', episode: '학습 에피소드',
+    eval: '평가', updating: '경사 갱신', resting: '휴식', paused: '일시정지', stopping: '정지 중',
+    done: '끝', error: '오류'
+  };
+
+  // ------------------------------------------------------------ 연결 표시
+  function setConn(ok) {
+    var el = $('conn');
+    if (ok) { el.textContent = '학습기와 연결됨'; el.className = 'conn ok'; }
+    else { el.textContent = '학습기와 연결 끊김'; el.className = 'conn bad'; }
+  }
+
+  // ------------------------------------------------------------ 버튼
+  function updateButtons(s) {
+    var st = s ? s.state : null;
+    var connected = !!s;
+    var canStart = connected && st === 'waiting';
+    var canPause = connected && st !== null && ['waiting', 'paused', 'done', 'error', 'stopping'].indexOf(st) < 0;
+    var canResume = connected && st === 'paused';
+    var canStop = connected && ['done', 'error', 'stopping'].indexOf(st) < 0;
+    $('b-start').disabled = !canStart;
+    $('b-pause').disabled = !canPause;
+    $('b-resume').disabled = !canResume;
+    $('b-stop').disabled = !canStop;
+    var pend = (s && Array.isArray(s.pending)) ? s.pending : [];
+    $('b-snapshot').disabled = !canStop || pend.indexOf('snapshot') >= 0;
+    $('b-evalnow').disabled = !canStop || pend.indexOf('eval') >= 0;
+  }
+
+  function renderSnaps(s) {
+    var list = Array.isArray(s.snapshots) ? s.snapshots : [];
+    var body = $('snapBody');
+    body.textContent = '';
+    setText('snap-title', '스냅샷 (checkpoints/) — ' + list.length + '개' +
+      (isNum(s.best_rms) ? ', best ' + s.best_rms.toFixed(3) + '°' : '') +
+      ((Array.isArray(s.pending) && s.pending.length) ? ' · 대기 중: ' + s.pending.join(', ') : ''));
+    if (!list.length) {
+      var tr0 = document.createElement('tr'), td0 = document.createElement('td');
+      td0.colSpan = 4; td0.className = 'muted'; td0.textContent = '아직 없음';
+      tr0.appendChild(td0); body.appendChild(tr0); return;
+    }
+    // 최근 것이 위로
+    list.slice().reverse().forEach(function (m) {
+      var tr = document.createElement('tr');
+      if (m.name === 'best') tr.className = 'best';
+      var rms = isNum(m.eval_rms) ? m.eval_rms.toFixed(3) : (isNum(m.recent_eval_rms) ? '~' + m.recent_eval_rms.toFixed(3) : '–');
+      var tm = typeof m.time === 'string' ? m.time.replace('T', ' ') : '–';
+      [m.name, isNum(m.episode) ? String(m.episode) : '–', rms, tm].forEach(function (v, i) {
+        var td = document.createElement('td');
+        td.textContent = v;
+        if (i === 1 || i === 2) td.className = 'num';
+        tr.appendChild(td);
+      });
+      body.appendChild(tr);
+    });
+  }
+
+  function sendCommand(cmd) {
+    if (cmd === 'stop' && !window.confirm('학습을 정지할까요? 모터를 멈추고 체크포인트를 저장한 뒤 종료합니다.')) return;
+    setText('cmdMsg', '요청 중…');
+    fetch('/api/command', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cmd: cmd }),
+      cache: 'no-store'
+    }).then(function (r) {
+      return r.json().catch(function () { return { ok: false, msg: '응답 해석 실패 (HTTP ' + r.status + ')' }; });
+    }).then(function (j) {
+      setText('cmdMsg', (j.ok ? '✔ ' : '✖ ') + (j.msg || ''));
+      poll();
+    }).catch(function () {
+      setText('cmdMsg', '✖ 학습기와 연결 끊김 — 명령을 보내지 못했습니다');
+    });
+  }
+  document.querySelectorAll('button[data-cmd]').forEach(function (b) {
+    b.addEventListener('click', function () { if (!b.disabled) sendCommand(b.getAttribute('data-cmd')); });
+  });
+
+  // ------------------------------------------------------------ 숫자 카드·상태
+  function render(s) {
+    var st = s.state || '';
+    var badge = $('state');
+    badge.textContent = STATE_KO[st] || st || '–';
+    badge.className = 'badge st-' + (st || 'none');
+    setText('detail', s.detail || '–');
+
+    var pb = $('pausedBox');
+    if (s.paused_reason) { pb.hidden = false; pb.textContent = '일시정지: ' + s.paused_reason; }
+    else { pb.hidden = true; pb.textContent = ''; }
+    var eb = $('errorBox');
+    if (s.last_error) { eb.hidden = false; eb.textContent = '오류: ' + s.last_error; }
+    else { eb.hidden = true; eb.textContent = ''; }
+
+    setText('link', s.link || '–');
+    setText('fw', s.fw || '–');
+    setText('runDir', s.run_dir || '–');
+
+    var c = s.counts || {};
+    setText('c-episode', fmt(s.episode));
+    setText('c-epLeft', isNum(s.episodes_left) ? '남은 ' + s.episodes_left + '회' : '–');
+    setText('c-eval', fmt(s.eval_rounds));
+    setText('c-decisions', fmt(s.decisions));
+    setText('c-warm', isNum(s.warmup_left) && s.warmup_left > 0 ? '워밍업 남음 ' + s.warmup_left : (isNum(s.warmup_left) ? '워밍업 끝' : '–'));
+    setText('c-updates', fmt(s.updates));
+    setText('c-buffer', isNum(s.buffer) ? '버퍼 ' + s.buffer : '–');
+    setText('c-elapsed', fmtTime(s.elapsed_s));
+    setText('c-remain', isNum(s.remaining_s) ? '남은 ' + fmtTime(s.remaining_s) : '–');
+    setText('c-motor', fmtTime(s.motor_on_s));
+    setText('c-rest', isNum(s.rest_left_s) ? '휴식 남은 ' + fmtTime(s.rest_left_s) : '휴식 없음');
+    setText('c-fb', fmt(c.fallbacks));
+    setText('c-abort', fmt(c.aborts));
+    setText('c-miss', fmt(c.misses));
+    setText('c-pwm', fmt(s.mean_pwm, 1));
+    var sac = s.sac || {};
+    setText('c-alpha', isNum(sac.alpha) ? sac.alpha.toPrecision(3) : '–');
+    var gap = s.att_gap_deg, gmax = s.att_gap_max_deg, gwarn = s.att_gap_warn_deg;
+    setText('c-gap', isNum(gap) ? (gap >= 0 ? '+' : '') + gap.toFixed(2) + '°' : '–');
+    setText('c-gapS', isNum(gmax) && gmax > 0 ? ('경고 ' + fmt(gwarn, 1) + '° · 정지 ' + fmt(gmax, 1) + '° (정상 0.3–0.9°)') : '감시 꺼짐');
+    var gc = $('c-gap');
+    gc.style.color = !isNum(gap) ? '' : (isNum(gmax) && gmax > 0 && Math.abs(gap) > gmax ? cssVar('--bad', '#d1242f')
+      : (isNum(gwarn) && gwarn > 0 && Math.abs(gap) > gwarn ? cssVar('--warn', '#9a6700') : ''));
+
+    setText('clock', new Date().toLocaleTimeString());
+    var logEl = $('log');
+    var lines = Array.isArray(s.log) ? s.log : [];
+    logEl.textContent = lines.length ? lines.join('\n') : '(로그 없음)';
+    logEl.scrollTop = logEl.scrollHeight;
+
+    renderSnaps(s);
+    updateButtons(s);
+  }
+
+  // ------------------------------------------------------------ 그래프
+  function setupCanvas(cv) {
+    var dpr = window.devicePixelRatio || 1;
+    var w = cv.clientWidth, h = cv.clientHeight;
+    if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) {
+      cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
+    }
+    var ctx = cv.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+    return { ctx: ctx, w: w, h: h };
+  }
+
+  // 범위 계산 (값이 없으면 기본 범위)
+  function niceRange(lo, hi) {
+    if (!isFinite(lo) || !isFinite(hi)) { lo = 0; hi = 1; }
+    if (hi - lo < 1e-9) { var m = Math.abs(lo) * 0.1 || 1; lo -= m; hi += m; }
+    var pad = (hi - lo) * 0.08;
+    return [lo - pad, hi + pad];
+  }
+
+  // 축·격자 그리기. opts: {left, right, top, bottom, xr, yr, yr2, xlabel, xticks}
+  function drawFrame(g, L) {
+    var ctx = g.ctx, w = g.w, h = g.h;
+    var grid = cssVar('--grid', '#e7eaf0'), fg = cssVar('--muted', '#6b7385');
+    ctx.font = '11px system-ui, sans-serif';
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = grid; ctx.fillStyle = fg;
+    var i, t, y, x;
+    for (i = 0; i <= 4; i++) {
+      t = L.top + (h - L.top - L.bottom) * i / 4;
+      ctx.beginPath(); ctx.moveTo(L.left, t); ctx.lineTo(w - L.right, t); ctx.stroke();
+      var val = L.yr[1] - (L.yr[1] - L.yr[0]) * i / 4;
+      ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+      ctx.fillText(val.toFixed(Math.abs(val) >= 10 ? 0 : 1), L.left - 6, t);
+      if (L.yr2) {
+        var v2 = L.yr2[1] - (L.yr2[1] - L.yr2[0]) * i / 4;
+        ctx.textAlign = 'left';
+        ctx.fillText(v2.toFixed(0), w - L.right + 6, t);
+      }
+    }
+    if (L.xr) {
+      var nx = 5;
+      for (i = 0; i <= nx; i++) {
+        x = L.left + (w - L.left - L.right) * i / nx;
+        var xv = L.xr[0] + (L.xr[1] - L.xr[0]) * i / nx;
+        ctx.textAlign = i === 0 ? 'left' : (i === nx ? 'right' : 'center');
+        ctx.textBaseline = 'top';
+        ctx.fillText(xv.toFixed(L.xdigits === undefined ? 0 : L.xdigits), x, h - L.bottom + 5);
+      }
+    }
+    if (L.xlabel) {
+      ctx.textAlign = 'right'; ctx.textBaseline = 'bottom';
+      ctx.fillText(L.xlabel, w - L.right, h - 1);
+    }
+    ctx.strokeStyle = fg;
+    ctx.beginPath(); ctx.moveTo(L.left, L.top); ctx.lineTo(L.left, h - L.bottom); ctx.lineTo(w - L.right, h - L.bottom); ctx.stroke();
+  }
+
+  function mapper(g, L) {
+    var pw = g.w - L.left - L.right, ph = g.h - L.top - L.bottom;
+    return {
+      x: function (v) { return L.left + (v - L.xr[0]) / ((L.xr[1] - L.xr[0]) || 1) * pw; },
+      y: function (v) { return L.top + (1 - (v - L.yr[0]) / ((L.yr[1] - L.yr[0]) || 1)) * ph; },
+      y2: function (v) { return L.top + (1 - (v - L.yr2[0]) / ((L.yr2[1] - L.yr2[0]) || 1)) * ph; }
+    };
+  }
+
+  function polyline(ctx, pts, color, dash, width) {
+    if (!pts.length) return;
+    ctx.save();
+    ctx.strokeStyle = color; ctx.lineWidth = width || 1.8;
+    ctx.setLineDash(dash || []);
+    ctx.beginPath();
+    pts.forEach(function (p, i) { if (i === 0) ctx.moveTo(p[0], p[1]); else ctx.lineTo(p[0], p[1]); });
+    ctx.stroke();
+    ctx.restore();
+  }
+  function dots(ctx, pts, color, r) {
+    ctx.save();
+    ctx.fillStyle = color;
+    pts.forEach(function (p) { ctx.beginPath(); ctx.arc(p[0], p[1], r || 3, 0, Math.PI * 2); ctx.fill(); });
+    ctx.restore();
+  }
+  function emptyMsg(g, text) {
+    var ctx = g.ctx;
+    ctx.fillStyle = cssVar('--muted', '#6b7385');
+    ctx.font = '13px system-ui, sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(text, g.w / 2, g.h / 2);
+  }
+
+  function arr(a) { return Array.isArray(a) ? a : []; }
+
+  // 그래프 1: 최근 에피소드 θ · ref · PWM
+  function drawG1(s) {
+    var cv = $('g1'), g = setupCanvas(cv);
+    var rec = arr(s && s.recent_episodes);
+    // 목록 끝에는 최근 평가·PID 기준선이 고정으로 붙으므로, 가장 최근 학습 에피소드를 우선 표시
+    var ep = null;
+    for (var i = rec.length - 1; i >= 0; i--) { if (rec[i] && rec[i].kind === 'train') { ep = rec[i]; break; } }
+    if (!ep && rec.length) ep = rec[rec.length - 1];
+    if (!ep) { setText('g1-title', '최근 에피소드 θ · 기준 · PWM'); emptyMsg(g, '에피소드 데이터 없음'); return; }
+    var kindKo = { train: '학습', eval: '평가', baseline: 'PID 기준선' };
+    setText('g1-title', '최근 에피소드 #' + (ep.episode !== undefined && ep.episode !== null ? ep.episode : '–') +
+      ' (' + (kindKo[ep.kind] || ep.kind || '–') + ', ' + (ep.scenario || '–') + ', ' + (ep.status || '–') +
+      ', RMS ' + fmt(ep.rms, 2) + '°)');
+    var t = arr(ep.t), th = arr(ep.theta), rf = arr(ep.ref), pw = arr(ep.pwm);
+    var n = Math.min(t.length, Math.max(th.length, rf.length, pw.length));
+    if (n < 2) { emptyMsg(g, '샘플 부족'); return; }
+    var tmin = t[0], tmax = t[n - 1];
+    var ylo = Infinity, yhi = -Infinity, i;
+    for (i = 0; i < n; i++) {
+      if (isNum(th[i])) { ylo = Math.min(ylo, th[i]); yhi = Math.max(yhi, th[i]); }
+      if (isNum(rf[i])) { ylo = Math.min(ylo, rf[i]); yhi = Math.max(yhi, rf[i]); }
+    }
+    var yr = niceRange(ylo, yhi);
+    var L = { left: 44, right: 40, top: 8, bottom: 22, xr: [tmin, tmax], yr: yr, yr2: [0, 255], xlabel: '시간 [s]', xdigits: 1 };
+    drawFrame(g, L);
+    var m = mapper(g, L), ctx = g.ctx;
+    var pT = [], pTh = [], pRf = [], pPw = [];
+    for (i = 0; i < n; i++) {
+      if (isNum(th[i])) pTh.push([m.x(t[i]), m.y(th[i])]);
+      if (isNum(rf[i])) pRf.push([m.x(t[i]), m.y(rf[i])]);
+      if (isNum(pw[i])) pPw.push([m.x(t[i]), m.y2(pw[i])]);
+    }
+    polyline(ctx, pPw, cssVar('--c-pwm', '#9a6700'), [], 1.2);
+    polyline(ctx, pRf, cssVar('--c-ref', '#d1242f'), [6, 4], 1.6);
+    polyline(ctx, pTh, cssVar('--c-theta', '#1f6feb'), [], 2);
+  }
+
+  // 그래프 2: 학습 곡선
+  function drawG2(s) {
+    var cv = $('g2'), g = setupCanvas(cv);
+    var lc = arr(s && s.learning_curve);
+    var ev = arr(s && s.eval_scores);
+    var base = s && s.baseline && isNum(s.baseline.rms_mean) ? s.baseline.rms_mean : null;
+    var train = lc.filter(function (p) { return p && p.kind === 'train' && isNum(p.rms) && isNum(p.episode); });
+    var evp = ev.filter(function (p) { return p && isNum(p.rms_mean) && isNum(p.episode); });
+    if (!train.length && !evp.length && base === null) { emptyMsg(g, '아직 데이터 없음'); return; }
+    var xs = [], ys = [];
+    train.forEach(function (p) { xs.push(p.episode); ys.push(p.rms); });
+    evp.forEach(function (p) { xs.push(p.episode); ys.push(p.rms_mean); });
+    if (base !== null) ys.push(base);
+    var xlo = xs.length ? Math.min.apply(null, xs) : 0, xhi = xs.length ? Math.max.apply(null, xs) : 1;
+    if (xhi - xlo < 1) xhi = xlo + 1;
+    var ylo = Math.min.apply(null, ys.concat([0])), yhi = Math.max.apply(null, ys);
+    var yr = niceRange(0, yhi);
+    var L = { left: 44, right: 12, top: 8, bottom: 22, xr: [xlo, xhi], yr: yr, xlabel: '학습 에피소드', xdigits: 0 };
+    drawFrame(g, L);
+    var m = mapper(g, L), ctx = g.ctx;
+    if (base !== null) {
+      polyline(ctx, [[L.left, m.y(base)], [g.w - L.right, m.y(base)]], cssVar('--c-base', '#6b7385'), [6, 4], 1.6);
+    }
+    var pe = evp.map(function (p) { return [m.x(p.episode), m.y(p.rms_mean)]; });
+    polyline(ctx, pe, cssVar('--c-eval', '#8250df'), [], 2.2);
+    dots(ctx, evp.map(function (p) { return [m.x(p.episode), m.y(p.rms_mean)]; }), cssVar('--c-eval', '#8250df'), 3);
+    dots(ctx, train.map(function (p) { return [m.x(p.episode), m.y(p.rms)]; }), cssVar('--c-train', '#2da44e'), 2.6);
+  }
+
+  // 그래프 3: 에피소드별 평균 PWM
+  function drawG3(s) {
+    var cv = $('g3'), g = setupCanvas(cv);
+    var lc = arr(s && s.learning_curve).filter(function (p) { return p && isNum(p.mean_pwm) && isNum(p.episode); });
+    if (!lc.length) { emptyMsg(g, '아직 데이터 없음'); return; }
+    var xs = lc.map(function (p) { return p.episode; });
+    var ys = lc.map(function (p) { return p.mean_pwm; });
+    var xlo = Math.min.apply(null, xs), xhi = Math.max.apply(null, xs);
+    if (xhi - xlo < 1) xhi = xlo + 1;
+    var yr = niceRange(Math.min.apply(null, ys), Math.max.apply(null, ys));
+    var L = { left: 44, right: 12, top: 8, bottom: 22, xr: [xlo, xhi], yr: yr, xlabel: '에피소드', xdigits: 0 };
+    drawFrame(g, L);
+    var m = mapper(g, L);
+    var tr = lc.filter(function (p) { return p.kind !== 'eval'; });
+    var ev = lc.filter(function (p) { return p.kind === 'eval'; });
+    var pts = lc.map(function (p) { return [m.x(p.episode), m.y(p.mean_pwm)]; });
+    polyline(g.ctx, pts, cssVar('--muted', '#6b7385'), [], 1);
+    dots(g.ctx, tr.map(function (p) { return [m.x(p.episode), m.y(p.mean_pwm)]; }), cssVar('--c-train', '#2da44e'), 2.6);
+    dots(g.ctx, ev.map(function (p) { return [m.x(p.episode), m.y(p.mean_pwm)]; }), cssVar('--c-eval', '#8250df'), 3.2);
+  }
+
+  // 그래프 4: 정상상태 편향 (학습 점, 평가 편향 선 + 리플 점선, PID 편향 이력 점 + 최근 점선).
+  // 편향 필드가 없는 옛 실행은 평균 |e| (ss_abs / ss_mean) 로 대신 그림
+  function biasOf(p, kTrain) {
+    if (!p) return null;
+    if (kTrain) return isNum(p.ss_bias) ? p.ss_bias : (isNum(p.ss_abs) ? p.ss_abs : null);
+    return isNum(p.bias_mean) ? p.bias_mean : (isNum(p.ss_mean) ? p.ss_mean : null);
+  }
+  function drawG4(s) {
+    var cv = $('g4'), g = setupCanvas(cv);
+    var train = arr(s && s.learning_curve).filter(function (p) {
+      return p && p.kind === 'train' && isNum(biasOf(p, true)) && isNum(p.episode);
+    }).map(function (p) { return { episode: p.episode, v: biasOf(p, true) }; });
+    var evp = arr(s && s.eval_scores).filter(function (p) { return p && isNum(biasOf(p)) && isNum(p.episode); })
+      .map(function (p) { return { episode: p.episode, v: biasOf(p), rip: p.ripple_mean, st: p.settle_mean, os: p.os_mean }; });
+    var bh = arr(s && s.baseline_history).filter(function (p) { return p && isNum(biasOf(p)) && isNum(p.episode); })
+      .map(function (p) { return { episode: p.episode, v: biasOf(p) }; });
+    var base = s && s.baseline && isNum(biasOf(s.baseline)) ? biasOf(s.baseline) : null;
+    var lastE = evp.length ? evp[evp.length - 1] : null, b0 = s && s.baseline;
+    setText('g4-note', lastE ? ('최근 평가: 편향 ' + fmt(lastE.v, 2) + '°, 리플 ' + fmt(lastE.rip, 2) + '°, 정착 ' +
+      fmt(lastE.st, 2) + ' s, OS ' + fmt(lastE.os, 1) + '%' + (b0 ? ('  |  PID: 편향 ' + fmt(biasOf(b0), 2) + '°, 리플 ' +
+      fmt(b0.ripple_mean, 2) + '°, 정착 ' + fmt(b0.settle_mean, 2) + ' s, OS ' + fmt(b0.os_mean, 1) + '%') : '')) : '\u00a0');
+    if (!train.length && !evp.length && base === null) { emptyMsg(g, '아직 데이터 없음 (새 실행부터 기록)'); return; }
+    var xs = [], ys = [];
+    train.forEach(function (p) { xs.push(p.episode); ys.push(p.v); });
+    evp.forEach(function (p) { xs.push(p.episode); ys.push(p.v); if (isNum(p.rip)) ys.push(p.rip); });
+    bh.forEach(function (p) { xs.push(p.episode); ys.push(p.v); });
+    if (base !== null) ys.push(base);
+    var xlo = xs.length ? Math.min.apply(null, xs) : 0, xhi = xs.length ? Math.max.apply(null, xs) : 1;
+    if (xhi - xlo < 1) xhi = xlo + 1;
+    // 학습 점은 가끔 크게 튀므로(케이블 충격·정착 실패) 위쪽은 평가·기준선과 학습 점 90 백분위로 자름
+    var ts = train.map(function (p) { return p.v; }).sort(function (a, b) { return a - b; });
+    var top = ts.length ? ts[Math.floor(0.9 * (ts.length - 1))] : 0;
+    evp.forEach(function (p) { top = Math.max(top, p.v); if (isNum(p.rip)) top = Math.max(top, p.rip); });
+    bh.forEach(function (p) { top = Math.max(top, p.v); });
+    if (base !== null) top = Math.max(top, base);
+    var yr = niceRange(0, top || 1);
+    var L = { left: 44, right: 12, top: 8, bottom: 22, xr: [xlo, xhi], yr: yr, xlabel: '학습 에피소드', xdigits: 0 };
+    drawFrame(g, L);
+    var m = mapper(g, L), ctx = g.ctx;
+    function cy(v) { return m.y(Math.min(v, yr[1])); }
+    if (base !== null) {
+      polyline(ctx, [[L.left, m.y(base)], [g.w - L.right, m.y(base)]], cssVar('--c-base', '#6b7385'), [6, 4], 1.6);
+    }
+    dots(ctx, bh.map(function (p) { return [m.x(p.episode), cy(p.v)]; }), cssVar('--c-base', '#6b7385'), 3.5);
+    dots(ctx, train.map(function (p) { return [m.x(p.episode), cy(p.v)]; }), cssVar('--c-train', '#2da44e'), 2.6);
+    var pr = evp.filter(function (p) { return isNum(p.rip); }).map(function (p) { return [m.x(p.episode), cy(p.rip)]; });
+    polyline(ctx, pr, cssVar('--c-eval', '#8250df'), [3, 3], 1.2);
+    var pe = evp.map(function (p) { return [m.x(p.episode), cy(p.v)]; });
+    polyline(ctx, pe, cssVar('--c-eval', '#8250df'), [], 2.2);
+    dots(ctx, pe, cssVar('--c-eval', '#8250df'), 3);
+  }
+
+  var lastStatus = null;
+  function drawAll() {
+    if (!lastStatus) { drawG1(null); drawG2(null); drawG3(null); drawG4(null); return; }
+    drawG1(lastStatus); drawG2(lastStatus); drawG3(lastStatus); drawG4(lastStatus);
+  }
+  var rzTimer = null;
+  window.addEventListener('resize', function () {
+    clearTimeout(rzTimer); rzTimer = setTimeout(drawAll, 120);
+  });
+  if (window.matchMedia) {
+    var mq = window.matchMedia('(prefers-color-scheme: dark)');
+    if (mq.addEventListener) mq.addEventListener('change', drawAll);
+  }
+
+  // ------------------------------------------------------------ 폴링
+  function onDisconnected() {
+    setConn(false);
+    updateButtons(null);
+    if (!lastStatus) { setText('state', '–'); }
+    var eb = $('errorBox');
+    eb.hidden = false;
+    eb.textContent = '학습기와 연결 끊김 — 마지막으로 받은 값을 표시합니다 (' +
+      (lastOk ? new Date(lastOk).toLocaleTimeString() : '없음') + ')';
+  }
+
+  function poll() {
+    if (busy) return;
+    busy = true;
+    fetch('/api/status', { cache: 'no-store' }).then(function (r) {
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    }).then(function (s) {
+      if (s && s.error) throw new Error(s.error);
+      lastStatus = s; lastOk = Date.now();
+      setConn(true);
+      render(s);
+      drawAll();
+    }).catch(function () {
+      onDisconnected();
+    }).then(function () {
+      busy = false;
+      setTimeout(poll, POLL_MS);
+    });
+  }
+
+  updateButtons(null);
+  poll();
+})();
+</script>
+</body>
+</html>

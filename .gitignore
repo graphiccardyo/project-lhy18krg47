@@ -5,6 +5,9 @@ logs/
 # Python
 __pycache__/
 *.pyc
+.venv/
+# RL 체크포인트 (리플레이 버퍼 포함, 큼)
+data/*_rl*/checkpoint/
 # 에이전트/편집기 로컬 설정
 .claude/
 .vscode/
