@@ -1,6 +1,6 @@
 # 시리얼 프로토콜 · 데이터 형식
 
-펌웨어 [firmware/aeropendulum_lab/aeropendulum_lab.ino](../firmware/aeropendulum_lab/aeropendulum_lab.ino) ↔ UI [lab/app.js](../lab/app.js) ↔ 시뮬레이터 [lab/sim.js](../lab/sim.js)가 같은 프로토콜을 씁니다. **명령이나 출력 형식을 바꾸면 세 곳과 이 문서, 시험 스크립트를 같이 바꿔야 합니다**([DEVELOPMENT.md](DEVELOPMENT.md#기능-추가-절차)).
+펌웨어 [firmware/aeropendulum_lab/aeropendulum_lab.ino](../firmware/aeropendulum_lab/aeropendulum_lab.ino) ↔ UI [lab/app.js](../lab/app.js) ↔ 시뮬레이터 [lab/sim.js](../lab/sim.js)가 같은 프로토콜을 씁니다. **명령이나 출력 형식을 바꾸면 세 곳과 이 문서, 시험 스크립트를 같이 바꿔야 합니다**([DEVELOPMENT.md](DEVELOPMENT.md#기능-추가-절차-예-새-시험-신호-새-명령)).
 
 - **250000 baud**, 8N1, 줄 단위 ASCII. PC → 보드는 `\n`(또는 `\r\n`), 보드 → PC는 `\r\n`입니다.
 - 명령 한 줄은 최대 71자입니다. 그보다 길거나 제어문자가 섞이면 `ERR INVALID_LINE`이 나고, 실행 중인 출력은 정지됩니다.

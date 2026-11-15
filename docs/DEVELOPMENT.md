@@ -8,6 +8,7 @@
 | Edge / Chrome | 실험 UI (Web Serial) | `file://`로 열어도 동작. Firefox·Safari는 Web Serial 미지원 |
 | Python 3.10+ | `analysis/` | `pip install -r analysis/requirements.txt` (numpy, scipy, matplotlib) |
 | Node.js | `scripts/test_sysid.js` (UI 계산 코드 시험) | |
+| Python `.venv` + PyTorch(CPU) | `rl/` 강화학습 학습기 | 사용법은 [rl/README.md](../rl/README.md) |
 | MATLAB + System Identification / Control System Toolbox | `matlab/` | 보고서용 추정·설계 |
 | Windows PowerShell 5.1 | `scripts/*.ps1` | 한글이 있는 `.ps1`은 **UTF-8 BOM**으로 저장해야 깨지지 않음 |
 
