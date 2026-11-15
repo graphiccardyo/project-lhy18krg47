@@ -22,6 +22,8 @@
   (`env.reward_from_obs`: 다음 관측의 오차·각속도와 정책 행동·직전 행동으로 계산. 원본 설정으로 다시 계산한 값이
   저장된 보상과 맞는지 먼저 확인하고 그 오차를 보고). 종단 전이(FALLBACK/ABORT 벌점)는 reward_scale 비율만 반영.
   재라벨하면 크리틱 재적응 기본 횟수가 20000 (아니면 10000).
+- 총 시간 한계: 학습기는 이어받은 경과 시간까지 세므로, `--config` 로 stop.max_hours 를 주지 않으면
+  max_hours = 이어받은 경과 + 원본 max_hours 로 늘립니다(분기한 실행이 원본과 같은 시간을 새로 쓸 수 있게).
 
     python -m rl.fork data/20261115_rl8 --snapshot best --config damp.json     # {"env": {"w_omega": 1.0, "w_ddu": 0.3}}
 """
@@ -213,6 +215,12 @@ def fork(src: str, snapshot: str, out: str | None = None, max_gap: float = 3.0, 
                  baseline=(bh[-1] if (keep_baseline and bh) else None), baseline_history=bh, eval_scores=evals,
                  curve=list(ex.get('curve', []))[:cut + 1], ep_index=cut + 1,
                  manual_evals=sum(1 for e in evals if e.get('manual')))
+    # 총 시간 한계(stop.max_hours)는 이어받은 경과 시간을 포함해 셈 → 그대로 두면 분기한 실행이 곧바로 끝남
+    # (11-15 rl9: rl8 경과 1.6 h 를 이어받아 2.0 h 한계에서 24 분 만에 종료). --config 로 직접 주지 않았으면 늘림.
+    if not ((overrides or {}).get('stop', {}) or {}).get('max_hours'):
+        cfg.stop.max_hours = round(state['elapsed'] / 3600.0 + src_cfg.stop.max_hours, 2)
+        log(f'총 시간 한계: 이어받은 경과 {state["elapsed"] / 3600:.2f} h + {src_cfg.stop.max_hours:g} h = '
+            f'{cfg.stop.max_hours:g} h (stop.max_hours)')
 
     out = out or new_run_dir()
     os.makedirs(os.path.join(out, 'episodes'), exist_ok=True)

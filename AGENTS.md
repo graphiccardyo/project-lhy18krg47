@@ -27,7 +27,7 @@
 | `matlab/` | MATLAB 분석 (`aero_load`, `aero_iddata`, `aero_sysid(_all)`, `aero_static_map`, `aero_pid_design`) |
 | `data/<날짜>_runN/` | 원본 CSV(수정 금지) + `analysis/REPORT.md` |
 | `scripts/` | `Build-Lab.ps1`(컴파일·업로드), `Test-LabFirmware.ps1`(보드 시험 67항목), `test_sysid.js` |
-| `docs/` | `EXPERIMENT_GUIDE`, `PROTOCOL`, `HARDWARE`, `RESULTS`, `DEVELOPMENT` |
+| `docs/` | `EXPERIMENT_GUIDE`, `PROTOCOL`, `HARDWARE`, `RESULTS`, `DEVELOPMENT`, `RL_PROTOCOL`, `RL_HISTORY`(강화학습 실행별 결정·근거 기록 — RL 설정을 바꾸면 여기에 한 항목 추가) |
 
 ## 반드시 지킬 것
 
@@ -84,6 +84,6 @@
 ## 남은 작업 (우선순위)
 
 1. 남은 하드웨어 폐루프 시험 (목표 4–6, 11-15 모델): PI + 2.35 Hz 노치·PID + 노치·Z-N PI는 확인(`data/20261115_run2`). 남은 것은 P(1.59), **Z-N PID(2.92 / 13.3 / 0.160, 불안정 가능 — run2의 Z-N PID 의도 기록 다섯 개는 Kp 2.19로 적용돼 있었음)**, Z-N PID + 노치, 같은 스텝의 손튜닝 PID, PI + 노치 30 s 유지 리플, 30° 스텝. UI에서 이득을 바꾸면 반드시 **이득 적용** 후 `PIDCFG` 줄로 확인하게 안내하세요(CSV `# pid` 줄 = 보드에 실제로 적용된 값). 절차는 `analysis/pid_design/REPORT.md` → UI ⑥이고, 결과는 `data/<날짜>_runN/`에 둡니다.
-2. 목표 7 강화학습. 실행 경로는 **PC 스트리밍**(RL 펌웨어 `A <du>`, `rl/`)으로 정했고 실기에서 학습합니다. 다음 실행은 **`data/20261115_rl9`**(rl8 best에서 분기, 감쇠 항 `w_omega` 1.0·`w_ddu` 0.3으로 보상 재라벨, `rl/README.md` "분기")이고 `--resume`으로 시작합니다. 보드는 지금 실험용 펌웨어라 `Build-Rl.ps1 -Upload`가 먼저, 시작 전 `rl.imu_check`. 볼 것: 30 s 유지 리플(rl8: σ(e) 0.6–0.8°의 대부분이 2.3–2.6 Hz 리플)·PWM 떨림이 줄었는지, 상승이 얼마나 느려졌는지. 결과 요약은 [docs/RESULTS.md](docs/RESULTS.md) §3a. 아래 보드 위 MLP 측정은 대안 경로 기록입니다. 도메인 랜덤화 범위(가짜 보드)는 `rl/config.py` `PlantCfg.dr`(11-15 모델 기준)에 있습니다.
+2. 목표 7 강화학습. 실행 경로는 **PC 스트리밍**(RL 펌웨어 `A <du>`, `rl/`)으로 정했고 실기에서 학습합니다. **`data/20261115_rl9`** 진행 중(rl8 best에서 분기, 감쇠 항 `w_omega` 1.0·`w_ddu` 0.3으로 보상 재라벨; 첫 실행은 분기 도구의 시간 한계 결함으로 27 ep에서 끝나 이어 하는 중). 지금까지의 결정·근거는 [docs/RL_HISTORY.md](docs/RL_HISTORY.md). 볼 것: 30 s 유지 리플(rl8: σ(e) 0.6–0.8°의 대부분이 2.3–2.6 Hz 리플)·PWM 떨림이 줄었는지, 상승이 얼마나 느려졌는지. 결과 요약은 [docs/RESULTS.md](docs/RESULTS.md) §3a. 아래 보드 위 MLP 측정은 대안 경로 기록입니다. 도메인 랜덤화 범위(가짜 보드)는 `rl/config.py` `PlantCfg.dr`(11-15 모델 기준)에 있습니다.
    - 플래시 측정(2026-11-13, 임시 변형 컴파일): 현재 31502 B(97%). CHIRP·PRBS 제거 → 29832 B(92%), STAIR·STEP까지 → 28728 B(89%), RELAY까지 → 27906 B(86%). MLP 4-16-1(가중치 RAM, `NN` 명령으로 업로드) 추가 비용은 플래시 약 0.7 KB, RAM 393 B입니다(현재 RAM 1040 / 2048 B).
    - 보드 위 추론 시간은 측정하지 않았습니다(추정 1–2 ms, 틱 예산 5 ms). 넣기 전에 `S` 줄 `maxTick`으로 확인하세요.

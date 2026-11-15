@@ -443,6 +443,14 @@ def t_fork(tmp):
           and c3['env']['w_ddu'] == 0.3, str(rl_))
     r4 = fork(src, 'ep00004', os.path.join(tmp, 'fork4'), critic_steps=0, log=lambda s: None)
     check('fork 보상 설정 그대로면 재라벨 없음', r4['relabel'] is None)
+    with open(os.path.join(tmp, 'fork4', 'config.json'), encoding='utf-8') as f:
+        c4 = json.load(f)
+    with open(os.path.join(tmp, 'fork4', 'checkpoint', 'trainer.json'), encoding='utf-8') as f:
+        el4 = json.load(f)['elapsed'] / 3600
+    with open(os.path.join(src, 'config.json'), encoding='utf-8') as f:
+        mh0 = json.load(f)['stop']['max_hours']
+    check('fork: 총 시간 한계 = 이어받은 경과 + 원본 max_hours (분기 직후 바로 끝나지 않게)',
+          abs(c4['stop']['max_hours'] - round(el4 + mh0, 2)) < 1e-6, f'{c4["stop"]["max_hours"]} = {el4:.3f} + {mh0}')
     bad = False
     try:
         fork(src, 'ep00004', os.path.join(tmp, 'fork5'), critic_steps=0, log=lambda s: None,
