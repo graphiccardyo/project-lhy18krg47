@@ -22,12 +22,13 @@ LOG_FIELDS = ['episode', 'kind', 'scenario', 'status', 'wall_s', 'board_s', 'hom
               'samples', 'decisions', 'return', 'rms', 'rms_after_step', 'mean_pwm', 'miss', 'miss_frac',
               'mean_abs_du', 'fallbacks_total', 'updates', 'buffer', 'alpha', 'q_loss', 'pi_loss', 'entropy',
               'motor_on_s', 'ss_e1', 'ss_e2', 'ss_abs', 'ss_pwm_sd', 'mean_abs_di',
-              'ss_bias', 'ss_ripple', 'settle_s', 'os_pct']
+              'ss_bias', 'ss_ripple', 'settle_s', 'os_pct', 'att_gap']
 # ss_*: 정상상태 지표 (run.ss_win_s 창 = 스텝 직전·에피소드 끝의 마지막 1.5 s). ss_e1/ss_e2 = 각 창의 평균 e(부호 있음),
 #       ss_abs = 두 창의 평균 |e|, ss_pwm_sd = 창 안 PWM 표준편차(창마다 평균을 뺀 합동 값, 떨림 지표)
 # mean_abs_di: 결정당 고정 적분 보조 증분 평균 |k_I·dt·e| [PWM] (mean_abs_du 는 보낸 전체 증분)
 # ss_bias = 창 평균 e 크기의 평균(오프셋), ss_ripple = 창 안 σ(e), settle_s = ±run.settle_band_deg 정착 시간 평균 [s]
 #       (끝까지 못 들어오면 구간 길이), os_pct = 오버슈트 최대 [%]  — trainer.steady_metrics
+# att_gap: 모터 가동 샘플의 평균 θ − θacc [deg] (자세 추정 이상 감시, 정상 0.3–0.9°)
 
 
 def new_run_dir(base: str | None = None, date: str | None = None) -> str:

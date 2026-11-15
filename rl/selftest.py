@@ -244,6 +244,19 @@ def t_trainer(tmp, quick):
           and board.u_out == 0, s['paused_reason'])
     board.alim = 10000
     tr.command('resume')
+    s = wait_state(('episode',))
+    # 자세 추정 표류 흉내: θacc 를 5° 낮춤 (θ − θacc = +5°) → 10 s 평균이 3° 를 넘으면 자동 일시정지
+    orig_measure = board.plant.measure
+    board.plant.measure = lambda running: (lambda m: (m[0], m[1], m[2] - 5.0))(orig_measure(running))
+    s = wait_state(('paused',), timeout=120)
+    board.plant.measure = orig_measure
+    # 가상 링크는 시간이 흘러야 명령을 보드에 전달하고, 일시정지 중에는 시간을 진행하지 않음 →
+    # STOP 이 보내졌는지(대기열에 있거나 이미 반영돼 u_out 0)로 확인 (실보드는 즉시 처리)
+    stop_sent = board.u_out == 0 or any(ln == 'STOP' for _, ln in list(tr.link.pending))
+    check('θ − θacc 표류(+5°) → 자동 일시정지 (STOP 전송)', s['state'] == 'paused'
+          and '자세 추정' in (s['paused_reason'] or '') and stop_sent and (s['att_gap_deg'] or 0) >= 3.0,
+          f'{s["paused_reason"]}, 간극 {s["att_gap_deg"]}, STOP {stop_sent}')
+    tr.command('resume')
     s = wait_state(('resting',), timeout=120)
     check('모터 가동 누적 → 휴식(STOP)', s['state'] == 'resting' and s['rest_left_s'] is not None,
           f'rest_left {s["rest_left_s"]}')
@@ -278,6 +291,7 @@ def t_trainer(tmp, quick):
 
     t_snapshots(tmp)
     t_play(tmp)
+    t_fork(tmp)
     t_steady(tmp)
 
     if quick:
@@ -379,6 +393,45 @@ def t_snapshots(tmp):
           and len(st3['snapshots']) == len(names) and st3['best_rms'] == s['best_rms'])
     tr3.rec.close()
     SNAP_RUN['dir'] = rd
+
+
+def t_fork(tmp):
+    print('== 6b. rl.fork (스냅샷 시점에서 분기 → 이어 하기)', flush=True)
+    import csv
+    import json
+    from .fork import fork
+    src = SNAP_RUN.get('dir')
+    if not src:
+        check('fork: 원본 실행 (스냅샷 시험) 없음', False)
+        return
+    with open(os.path.join(src, 'checkpoints', 'ep00004', 'meta.json'), encoding='utf-8') as f:
+        meta = json.load(f)
+    out = os.path.join(tmp, 'fork1')
+    r = fork(src, 'ep00004', out, max_gap=3.0, critic_steps=300, log=lambda s: None)
+    with open(os.path.join(out, 'train_log.csv'), encoding='utf-8') as f:
+        lr = list(csv.DictReader(f))
+    check('fork: 스냅샷까지의 버퍼·train_log·스냅샷 복사 (가짜 보드는 간극 0 → 제외 0)',
+          r['episode'] == 4 and r['cut'] == meta['decisions'] and r['kept'] == r['cut'] and int(lr[-1]['buffer']) == r['cut']
+          and lr[-1]['kind'] == 'train' and 'ep00004' in r['snapshots'] and 'ep00006' not in r['snapshots']
+          and all(x['att_gap'] != '' for x in lr), f'{r}, 줄 {len(lr)}')
+    r2 = fork(src, 'ep00004', os.path.join(tmp, 'fork2'), max_gap=0.05, critic_steps=0, log=lambda s: None)
+    check('fork: --max-gap 으로 간극 큰 전이 제외', 0 < r2['kept'] < r2['cut'], f'{r2["kept"]}/{r2["cut"]}')
+    tr, _, _ = _virtual_trainer(tmp, 'fork1', 6, {'run.baseline_at_start': True, 'run.eval_every': 3,
+                                                  'run.baseline_every': 1}, resume_dir=out)
+    st0 = tr.status()
+    from .sac import load_actor_state
+    import torch
+    sd, _ = load_actor_state(os.path.join(src, 'checkpoints', 'ep00004'))
+    same = all(torch.equal(sd[k], v) for k, v in tr.sac.actor.state_dict().items())
+    check('fork → --resume: 학습 4 ep·스냅샷 갱신 수·스냅샷 액터에서 시작', st0['episode'] == 4 and same
+          and st0['updates'] == meta['updates'] and st0['buffer'] == r['kept'], f'ep {st0["episode"]}, 갱신 {st0["updates"]}')
+    tr.start()
+    tr.wait(300)
+    s = tr.status()
+    eps = [b['episode'] for b in s['baseline_history']]
+    check('fork 이어 하기: 시작 때 PID 기준선 다시, 같은 에피소드에서 중복 없음, 학습 6 ep 까지', s['state'] == 'done'
+          and s['episode'] == 6 and eps.count(4) == 1 and s['baseline']['episode'] >= 4, f'{s["state"]}, 기준선 {eps}')
+    tr.rec.close()
 
 
 def t_play(tmp):

@@ -131,6 +131,7 @@ pre#log { margin: 0; max-height: 260px; overflow: auto; background: var(--bg); b
     <div class="card"><div class="k">miss 누적</div><div class="v" id="c-miss">–</div></div>
     <div class="card"><div class="k">평균 PWM (직전 에피소드)</div><div class="v" id="c-pwm">–</div></div>
     <div class="card"><div class="k">SAC α</div><div class="v" id="c-alpha">–</div></div>
+    <div class="card" id="card-gap"><div class="k">자세 추정 θ − θacc</div><div class="v" id="c-gap">–</div><div class="s" id="c-gapS">–</div></div>
   </section>
 
   <section class="charts">
@@ -333,6 +334,12 @@ pre#log { margin: 0; max-height: 260px; overflow: auto; background: var(--bg); b
     setText('c-pwm', fmt(s.mean_pwm, 1));
     var sac = s.sac || {};
     setText('c-alpha', isNum(sac.alpha) ? sac.alpha.toPrecision(3) : '–');
+    var gap = s.att_gap_deg, gmax = s.att_gap_max_deg, gwarn = s.att_gap_warn_deg;
+    setText('c-gap', isNum(gap) ? (gap >= 0 ? '+' : '') + gap.toFixed(2) + '°' : '–');
+    setText('c-gapS', isNum(gmax) && gmax > 0 ? ('경고 ' + fmt(gwarn, 1) + '° · 정지 ' + fmt(gmax, 1) + '° (정상 0.3–0.9°)') : '감시 꺼짐');
+    var gc = $('c-gap');
+    gc.style.color = !isNum(gap) ? '' : (isNum(gmax) && gmax > 0 && Math.abs(gap) > gmax ? cssVar('--bad', '#d1242f')
+      : (isNum(gwarn) && gwarn > 0 && Math.abs(gap) > gwarn ? cssVar('--warn', '#9a6700') : ''));
 
     setText('clock', new Date().toLocaleTimeString());
     var logEl = $('log');

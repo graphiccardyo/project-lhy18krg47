@@ -66,6 +66,7 @@
         episodes_left    max_episodes 까지 남은 학습 에피소드 수
         sac              {alpha, q_loss, pi_loss, entropy, q_mean}
         last_s           최근 S 줄 {state, maxTick_us, overruns, gate_pct, sat}
+        att_gap_deg      모터 가동 중 θ − θacc 의 monitor.att_gap_win_s 이동평균 [deg] | None (+ att_gap_max/warn_deg)
         last_error       마지막 오류 메시지 | None
         log              최근 이벤트 문자열 50개
 """
@@ -277,6 +278,10 @@ class Trainer(threading.Thread):
         self._last_rx = 0.0
         self._prev_overruns = None
         self._sat_run = 0
+        self._gap_q = deque()          # 모터 가동 중 θ − θacc [deg] (att_gap_win_s 창)
+        self._gap_sum = 0.0
+        self.att_gap = None            # 최근 창 평균 θ − θacc [deg]
+        self._gap_warn_t = None
         self._in_episode = False
         self._abort_flag = None
         self._finished = threading.Event()
@@ -323,6 +328,8 @@ class Trainer(threading.Thread):
                 counts=dict(fallbacks=self.fallbacks, aborts=self.aborts, misses=self.misses, pauses=self.pauses,
                             train_episodes=self.train_episodes, eval_episodes=self.eval_episodes),
                 mean_pwm=self.mean_pwm, motor_on_s=self.motor_on_s, rest_left_s=self.rest_left,
+                att_gap_deg=self.att_gap, att_gap_max_deg=c.monitor.att_gap_max_deg,
+                att_gap_warn_deg=c.monitor.att_gap_warn_deg,
                 elapsed_s=elapsed, remaining_s=max(0.0, c.stop.max_hours * 3600 - elapsed),
                 episodes_left=max(0, c.stop.max_episodes - self.train_episodes),
                 sac={k: (None if isinstance(v, float) and math.isnan(v) else v) for k, v in self.sac.last.items()},
@@ -383,6 +390,32 @@ class Trainer(threading.Thread):
                 return True
         return False
 
+    def _gap_reset(self):
+        self._gap_q.clear()
+        self._gap_sum = 0.0
+
+    def _gap_check(self, g: float):
+        """모터 가동 중 θ − θacc 이동평균 감시 (진동에 의한 자이로 편향 → 자세 추정 표류)."""
+        mc = self.cfg.monitor
+        n = max(1, int(round(mc.att_gap_win_s / self.ts)))
+        self._gap_q.append(g)
+        self._gap_sum += g
+        while len(self._gap_q) > n:
+            self._gap_sum -= self._gap_q.popleft()
+        if len(self._gap_q) < n:
+            return
+        mean = self._gap_sum / n
+        self.att_gap = round(mean, 3)
+        if mc.att_gap_max_deg > 0 and abs(mean) > mc.att_gap_max_deg:
+            self._gap_reset()
+            raise Pause(f'자세 추정 이상: θ − θacc {mean:+.1f}° ({mc.att_gap_win_s:g} s 평균) > {mc.att_gap_max_deg:g}° '
+                        f'— 진동으로 자이로가 편향된 것으로 의심 (프로펠러·모터·마운트 확인, 쉬면 회복될 수 있음)')
+        if mc.att_gap_warn_deg > 0 and abs(mean) > mc.att_gap_warn_deg:
+            now = self._elapsed()
+            if self._gap_warn_t is None or now - self._gap_warn_t > 60.0:
+                self._gap_warn_t = now
+                self._event(f'경고: θ − θacc {mean:+.1f}° ({mc.att_gap_win_s:g} s 평균) > {mc.att_gap_warn_deg:g}°')
+
     def _monitor(self, m):
         """모든 수신 줄 공통 감시. 일시정지가 필요하면 Pause."""
         k = m.kind
@@ -390,6 +423,10 @@ class Trainer(threading.Thread):
             f = m.f
             if f[1] != 0:
                 self.motor_on_s += self.ts
+                if len(f) >= 5:
+                    self._gap_check((f[2] - f[4]) * 0.01)
+            else:
+                self._gap_reset()
             cur = self.current
             if cur is not None:
                 cur['theta'] = f[2] * 0.01
@@ -606,6 +643,9 @@ class Trainer(threading.Thread):
                    entropy=round(sl['entropy'], 4) if not math.isnan(sl['entropy']) else '',
                    motor_on_s=round(self.motor_on_s, 1))
         ss = ss or {}
+        on = [x[2] - x[4] for x in rows if x[1]]
+        att_gap = round(sum(on) / len(on), 3) if on else None
+        row['att_gap'] = '' if att_gap is None else att_gap
         row.update({k: ('' if ss.get(k) is None else ss[k])
                     for k in ('ss_e1', 'ss_e2', 'ss_abs', 'ss_pwm_sd', 'ss_bias', 'ss_ripple', 'settle_s', 'os_pct')})
         row['return'] = row.pop('ret')
@@ -618,6 +658,7 @@ class Trainer(threading.Thread):
                                    mean_pwm=round(summ['mean_pwm'], 1), alpha=round(sl['alpha'], 5),
                                    ss_abs=ss.get('ss_abs'), ss_pwm_sd=ss.get('ss_pwm_sd'), ss_bias=ss.get('ss_bias'),
                                    ss_ripple=ss.get('ss_ripple'), settle_s=ss.get('settle_s'), os_pct=ss.get('os_pct'),
+                                   att_gap=att_gap,
                                    time_s=round(self._elapsed(), 1)))
             if kind == 'train':
                 self.series.append(ser)
@@ -811,7 +852,8 @@ class Trainer(threading.Thread):
         c = self.cfg
         self._eval_round(manual=manual)
         regular = self.eval_rounds - self.manual_evals
-        if not manual and c.run.baseline_every > 0 and regular % c.run.baseline_every == 0:
+        just_measured = self.baseline is not None and self.baseline.get('episode') == self.train_episodes
+        if not manual and c.run.baseline_every > 0 and regular % c.run.baseline_every == 0 and not just_measured:
             self._baseline_round()     # 플랜트가 세션 중 흘러가므로 비교 기준도 다시 잼 (갱신 없음, 버퍼에 안 넣음)
         self._updates(len(c.run.eval_refs) * int(c.episode.dur_s / (self.ts * c.rl.dec)))
 
@@ -950,16 +992,16 @@ class Trainer(threading.Thread):
             raise StopRun(f'FALLBACK 누적 {self.fallbacks} ≥ {s.max_fallbacks}')
 
     def _pause(self, reason: str):
+        try:                       # 모터 정지를 먼저 (상태 표시보다)
+            if self.link is not None and not self.link.error:
+                self.link.send('STOP')
+        except Exception:
+            pass
         with self._lock:
             self.paused_reason = reason
             self.current = None
         self.pauses += 1
         self._set('paused', '재개(resume) 대기')
-        try:
-            if self.link is not None and not self.link.error:
-                self.link.send('STOP')
-        except Exception:
-            pass
         self._event(f'일시정지: {reason}')
         self._save_checkpoint()
         if self._take('snapshot'):
@@ -997,6 +1039,7 @@ class Trainer(threading.Thread):
                 self._event(f'재설정 실패({e}), 다시 연결')
                 self._connect()
         self.motor_on_s = 0.0      # 일시정지 동안 식었다고 봄
+        self._gap_reset()
 
     # ================================================================== 체크포인트
     def _state_dict(self):

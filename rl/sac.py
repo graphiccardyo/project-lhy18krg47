@@ -220,6 +220,30 @@ class SAC:
                          entropy=float(-lp), q_mean=float(q.detach().mean()))
         return n
 
+    def update_critic(self, n: int = 1):
+        """크리틱만 경사 갱신 n 번 (액터·α 고정). 분기(rl.fork) 때 크리틱을 지금 액터에 다시 맞추는 용도.
+        갱신 카운터(updates)는 올리지 않습니다. 마지막 q 손실을 돌려줌."""
+        cfg = self.cfg
+        if self.buffer.n < cfg.batch:
+            return float('nan')
+        tp, cp = self._tparams, self._cparams
+        alpha = self.log_alpha.exp().detach()
+        q_loss = torch.tensor(float('nan'))
+        for _ in range(n):
+            o, a, r, o2, d = self.buffer.sample(cfg.batch, self.rng)
+            with torch.no_grad():
+                a2, logp2 = self.actor.sample(o2)
+                qt = self._q(self.target, o2, a2).min(0)[0]
+                y = r + cfg.gamma * (1 - d) * (qt - alpha * logp2)
+            q = self._q(self.critic, o, a)
+            q_loss = ((q - y) ** 2).mean() * 2
+            self.opt_critic.zero_grad(set_to_none=True)
+            q_loss.backward()
+            self.opt_critic.step()
+            with torch.no_grad():
+                torch._foreach_lerp_(tp, cp, cfg.tau)
+        return float(q_loss.detach())
+
     def sync_policy(self):
         """갱신 뒤 numpy 사본을 새로 고침 (에피소드 시작 전에만 호출)."""
         self.policy.load(self.actor)
