@@ -18,6 +18,12 @@
 - train_log.csv: 그 시점까지의 줄 (현재 열 형식, att_gap 은 에피소드 CSV 에서 다시 계산). 스냅샷 폴더 중 그 시점
   이전 것은 복사. 에피소드 CSV 는 복사하지 않습니다(원본에 있음). fork.json 에 출처·거른 수·크리틱 손실.
 - 설정: 원본 config.json (옛 실행 호환 규칙 그대로) + `--config` (바꿀 항목만 적은 JSON).
+- 보상 재라벨: `--config` 로 보상 관련 env 키(REWARD_KEYS)를 바꾸면 남긴 전이의 보상을 새 식으로 다시 계산합니다
+  (`env.reward_from_obs`: 다음 관측의 오차·각속도와 정책 행동·직전 행동으로 계산. 원본 설정으로 다시 계산한 값이
+  저장된 보상과 맞는지 먼저 확인하고 그 오차를 보고). 종단 전이(FALLBACK/ABORT 벌점)는 reward_scale 비율만 반영.
+  재라벨하면 크리틱 재적응 기본 횟수가 20000 (아니면 10000).
+
+    python -m rl.fork data/20261115_rl8 --snapshot best --config damp.json     # {"env": {"w_omega": 1.0, "w_ddu": 0.3}}
 """
 from __future__ import annotations
 
@@ -36,6 +42,13 @@ import numpy as np
 
 from .config import _merge, load_run_config, save_config
 from .record import LOG_FIELDS, new_run_dir
+
+# 보상 식에 들어가는 env 키 (env.EpisodeEnv._reward, env.reward_from_obs)
+REWARD_KEYS = ('err_scale', 'err_cap', 'w_abs', 'w_du', 'w_ddu', 'w_fine', 'fine_scale', 'w_omega', 'omega_scale',
+               'omega_gate', 'omega_cap', 'reward_scale', 'act_pow')
+# 관측 정의에 들어가는 env 키 — 바뀌면 옛 전이를 그대로 쓸 수 없음
+OBS_KEYS = ('th_center', 'th_scale', 'w_scale', 'w_lpf_hz', 'u_center', 'u_scale', 'obs_eint', 'eint_tau_s', 'eint_scale',
+            'obs_efine', 'efine_scale')
 
 
 def _rolling_gap(pwm, th, tha, win: int) -> np.ndarray:
@@ -81,15 +94,25 @@ def _read_episode(path):
     return np.array(pwm), np.array(th), np.array(tha), np.array(rew, bool)
 
 
-def fork(src: str, snapshot: str, out: str | None = None, max_gap: float = 3.0, critic_steps: int = 10000,
-         overrides: dict | None = None, keep_baseline: bool = False, log=print) -> dict:
+def fork(src: str, snapshot: str, out: str | None = None, max_gap: float = 3.0, critic_steps: int | None = None,
+         overrides: dict | None = None, keep_baseline: bool = False, log=print, relabel: str = 'auto') -> dict:
+    import copy
     import torch
-    from .env import obs_dim
+    from .env import obs_dim, reward_from_obs
     from .sac import SAC, load_actor_state
 
     cfg = load_run_config(os.path.join(src, 'config.json'))
+    src_cfg = copy.deepcopy(cfg)
     if overrides:
         _merge(cfg, overrides, '')
+    changed_obs = [k for k in OBS_KEYS if getattr(cfg.env, k) != getattr(src_cfg.env, k)]
+    if changed_obs:
+        raise SystemExit(f'관측 정의가 바뀌면 옛 전이를 쓸 수 없습니다: {changed_obs}')
+    changed_rew = {k: (getattr(src_cfg.env, k), getattr(cfg.env, k)) for k in REWARD_KEYS
+                   if getattr(cfg.env, k) != getattr(src_cfg.env, k)}
+    do_relabel = relabel == 'yes' or (relabel == 'auto' and bool(changed_rew))
+    if critic_steps is None:
+        critic_steps = 20000 if do_relabel else 10000
     snap_dir = os.path.join(src, 'checkpoints', snapshot)
     with open(os.path.join(snap_dir, 'meta.json'), encoding='utf-8') as f:
         meta = json.load(f)
@@ -154,6 +177,23 @@ def fork(src: str, snapshot: str, out: str | None = None, max_gap: float = 3.0, 
         getattr(B, name)[:kept] = z[name][:cut_n][mask]
     B.n = kept
     B.ptr = kept % B.size
+    rl_info = None
+    if do_relabel:
+        o_, a_, r_, o2_, d_ = B.o[:kept], B.a[:kept], B.r[:kept, 0], B.o2[:kept], B.d[:kept, 0]
+        nt = d_ == 0
+        chk = reward_from_obs(src_cfg, o_[nt], a_[nt], o2_[nt])
+        err = np.abs(chk - r_[nt])
+        r_new = r_.astype(np.float64).copy()
+        r_new[nt] = reward_from_obs(cfg, o_[nt], a_[nt], o2_[nt])
+        r_new[~nt] *= cfg.env.reward_scale / src_cfg.env.reward_scale
+        rl_info = dict(changed=changed_rew, check_max_err=float(err.max()) if len(err) else 0.0,
+                       check_p99_err=float(np.percentile(err, 99)) if len(err) else 0.0,
+                       mean_old=float(r_.mean()), mean_new=float(r_new.mean()), terminal=int((~nt).sum()))
+        B.r[:kept, 0] = r_new.astype(np.float32)
+        log(f'보상 재라벨 {changed_rew}: 원본 식 재계산 오차 최대 {rl_info["check_max_err"]:.1e}, '
+            f'평균 보상 {rl_info["mean_old"]:.4f} → {rl_info["mean_new"]:.4f} (종단 {rl_info["terminal"]} 개는 배율만)')
+        if rl_info['check_max_err'] > 1e-3:
+            log('경고: 원본 식으로 다시 계산한 보상이 저장값과 1e-3 넘게 다릅니다 (k_I = 0 실행이면 정수 증분 근사 때문)')
     losses = []
     t0 = time.time()
     step = 1000
@@ -199,7 +239,7 @@ def fork(src: str, snapshot: str, out: str | None = None, max_gap: float = 3.0, 
             shutil.copytree(d, os.path.join(out, 'checkpoints', os.path.basename(d)), dirs_exist_ok=True)
             snaps.append(os.path.basename(d))
     prov = dict(src=os.path.abspath(src), snapshot=snapshot, snapshot_meta=meta, cut_row=cut, cut_transitions=cut_n,
-                max_gap_deg=max_gap, gap_window_s=cfg.monitor.att_gap_win_s, kept_transitions=kept,
+                max_gap_deg=max_gap, gap_window_s=cfg.monitor.att_gap_win_s, kept_transitions=kept, relabel=rl_info,
                 dropped_transitions=cut_n - kept, critic_steps=critic_steps, critic_q_loss=losses,
                 alpha=alpha, keep_baseline=keep_baseline, overrides=overrides or {}, copied_snapshots=snaps,
                 time=time.strftime('%Y-%m-%dT%H:%M:%S'))
@@ -207,9 +247,11 @@ def fork(src: str, snapshot: str, out: str | None = None, max_gap: float = 3.0, 
         json.dump(prov, f, ensure_ascii=False, indent=1)
     with open(os.path.join(out, 'events.log'), 'a', encoding='utf-8') as f:
         f.write(f'{time.strftime("%Y-%m-%dT%H:%M:%S")} 분기: {src} 의 스냅샷 {snapshot} (학습 {ep_snap} ep, 결정 {cut_n}) '
-                f'→ 버퍼 {kept}/{cut_n} (θ−θacc > {max_gap:g}° {cut_n - kept} 개 제외), 크리틱 재적응 {critic_steps} 회, '
+                f'→ 버퍼 {kept}/{cut_n} (θ−θacc > {max_gap:g}° {cut_n - kept} 개 제외), '
+                f'{"보상 재라벨 " + str(changed_rew) + ", " if rl_info else ""}크리틱 재적응 {critic_steps} 회, '
                 f'PID 기준선 {"유지" if keep_baseline else "다시 잼"}\n')
-    return dict(out=out, kept=kept, cut=cut_n, dropped=cut_n - kept, losses=losses, episode=ep_snap, snapshots=snaps)
+    return dict(out=out, kept=kept, cut=cut_n, dropped=cut_n - kept, losses=losses, episode=ep_snap, snapshots=snaps,
+                relabel=rl_info)
 
 
 def main(argv=None):
@@ -219,7 +261,9 @@ def main(argv=None):
     ap.add_argument('--out', help='새 실행 폴더 (기본: data/<오늘>_rl<다음 번호>)')
     ap.add_argument('--max-gap', type=float, default=3.0,
                     help='θ − θacc 이동평균이 이 값[°]을 넘는 결정 샘플의 전이 제외 (0 = 거르지 않음, 기본 3)')
-    ap.add_argument('--critic-steps', type=int, default=10000, help='크리틱 재적응 갱신 수 (기본 10000)')
+    ap.add_argument('--critic-steps', type=int, default=None, help='크리틱 재적응 갱신 수 (기본 10000, 보상 재라벨 시 20000)')
+    ap.add_argument('--relabel', choices=('auto', 'yes', 'no'), default='auto',
+                    help='보상 재라벨 (auto = 보상 관련 설정이 바뀌면)')
     ap.add_argument('--config', help='바꿀 설정만 적은 JSON (예: {"rest": {"max_on_s": 150}})')
     ap.add_argument('--keep-baseline', action='store_true', help='PID 기준선을 다시 재지 않고 유지')
     args = ap.parse_args(argv)
@@ -227,7 +271,7 @@ def main(argv=None):
     if args.config:
         with open(args.config, encoding='utf-8') as f:
             ov = json.load(f)
-    r = fork(args.src, args.snapshot, args.out, args.max_gap, args.critic_steps, ov, args.keep_baseline)
+    r = fork(args.src, args.snapshot, args.out, args.max_gap, args.critic_steps, ov, args.keep_baseline, relabel=args.relabel)
     print(f'새 실행 폴더: {r["out"]}  (학습 {r["episode"]} ep 시점, 버퍼 {r["kept"]}/{r["cut"]}, '
           f'제외 {r["dropped"]}, 스냅샷 복사 {r["snapshots"]})')
     print(f'이어 하기: .venv\\Scripts\\python.exe -m rl.train --port COM4 --resume {r["out"]}')

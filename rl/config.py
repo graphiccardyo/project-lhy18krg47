@@ -140,6 +140,14 @@ class EnvCfg:
     w_ddu: float = 0.1          # 행동 변화 벌점: w_ddu·((du−du_prev)/du_max)² (rl1 0.02 → 정착 구간 du ±3–4 떨림)
     w_fine: float = 2.0         # 정밀 항: w_fine·(1 − exp(−(e/fine_scale)²)) — 작은 오차(0.2–1°)에서 기울기가 큼
     fine_scale: float = 0.5     # [deg]
+    # 감쇠 항 (11-15): 기준 근처에서 각속도에 벌점 → 2.3–2.6 Hz 공진 리플을 줄이게 함.
+    #   −w_omega · exp(−(e/omega_gate)²) · min((ω_f/omega_scale)², omega_cap)
+    #   ω_f = 10 Hz 저역통과 각속도(관측 o[2]·w_scale 과 같음). 기준에서 멀면(과도 구간) 게이트가 꺼져 상승을 늦추지 않음.
+    #   리플 ±1° @ 2.4 Hz ≈ ω 15 °/s → (15/20)² = 0.56. rl8 30 s 유지에서 오차의 대부분이 이 리플이었음.
+    w_omega: float = 0.0
+    omega_scale: float = 20.0   # [deg/s]
+    omega_gate: float = 2.0     # [deg]
+    omega_cap: float = 4.0
     fallback_penalty: float = 30.0   # FALLBACK 종단 벌점
     abort_penalty: float = 60.0      # ABORT 종단 벌점
     reward_scale: float = 0.03       # 전체 보상 배율 (Q 크기 조절)
