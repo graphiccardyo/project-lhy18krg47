@@ -10,7 +10,7 @@
 
 공통: 펌웨어 2.1, 축 Z+, β 0.004, DLPF 5, 폐루프 최소 PWM(umin) 없음(헤더에 없음 = 0), 최대 PWM 255(기록에 255가 나옴). Downloads의 `새 폴더` 사본과 바이트가 같음을 확인했습니다.
 
-재현: `python analysis/aero_closedloop.py data/20261113_run2` → `closedloop.txt`, `closedloop_fit.png`, `relay_fit.png`
+재현: `python analysis/aero_closedloop.py data/20261113_run2 --model 0.14 0.319 0.021 2.84 0.136 0.05 6 --margin-k 0.12 0.14 0.24` (11-15 뒤 기본 모델이 바뀌어 `--model` 필요) → `closedloop.txt`, `closedloop_fit.png`, `relay_fit.png`
 
 방법: 기준 스텝 2 s 전(6 s)의 평형(θ0, u0)에서 시작해 **최종 모델**(run1: K 0.14, T 0.319 s, L 21 ms, 2.84 Hz/ζ 0.136, 느린 경로 0.05/(6 s+1))과 **펌웨어와 같은 `pidStep`**(D 10 Hz 필터, 노치 사전왜곡 쌍선형, 최소·최대 PWM 포화, 조건부 적분)으로 시뮬레이션해 실측 θ·PWM과 겹쳐 봤습니다. 잡음·마찰·케이블은 넣지 않았습니다.
 

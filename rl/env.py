@@ -52,6 +52,28 @@ def obs_dim(cfg: Config) -> int:
     return OBS_DIM + (1 if cfg.env.obs_eint else 0) + (1 if cfg.env.obs_efine else 0)
 
 
+def reward_from_obs(cfg: Config, o, a, o2):
+    """리플레이 전이 (o, a, o2) 에서 보상을 다시 계산 (벡터, 종단 전이 제외 — 그건 벌점 상수).
+    EpisodeEnv._reward 와 같은 식: 오차·각속도 = 다음 결정의 관측 o2[:,0]·th_scale, o2[:,2]·w_scale,
+    정책 몫 증분 x = sign(a)|a|^p, 직전 증분 = 관측의 직전 행동 o[:,5] 를 같은 곡선으로.
+    k_I > 0 실행에서는 보낸 그대로 적용된 결정의 벌점이 정확히 이 값이고, 누락·범위 자르기 결정만 근사입니다
+    (k_I = 0 실행은 실제 정수 증분을 썼으므로 근사). rl.fork 의 보상 재라벨에 씀."""
+    c = cfg.env
+    p = c.act_pow
+    o, a, o2 = np.asarray(o, np.float64), np.asarray(a, np.float64).reshape(-1), np.asarray(o2, np.float64)
+    e = o2[:, 0] * c.th_scale
+    wf = o2[:, 2] * c.w_scale
+    x = np.sign(a) * np.abs(a) ** p
+    xp = np.sign(o[:, 5]) * np.abs(o[:, 5]) ** p
+    ax = np.abs(e) / c.err_scale
+    r = -np.minimum(ax * ax, c.err_cap) - c.w_abs * np.minimum(ax, c.err_cap) - c.w_du * x * x - c.w_ddu * (x - xp) ** 2
+    if c.w_fine:
+        r -= c.w_fine * (1.0 - np.exp(-(e / c.fine_scale) ** 2))
+    if c.w_omega:
+        r -= c.w_omega * np.exp(-(e / c.omega_gate) ** 2) * np.minimum((wf / c.omega_scale) ** 2, c.omega_cap)
+    return c.reward_scale * r
+
+
 class EpisodeEnv:
     def __init__(self, cfg: Config):
         self.cfg = cfg
@@ -99,12 +121,14 @@ class EpisodeEnv:
         self.reset_stats()
         self.active = True
 
-    def _reward(self, e_deg: float, a: float, a_prev: float) -> float:
+    def _reward(self, e_deg: float, a: float, a_prev: float, w_f: float = 0.0) -> float:
         c = self.cfg.env
         x = abs(e_deg) / c.err_scale
         r = -min(x * x, c.err_cap) - c.w_abs * min(x, c.err_cap) - c.w_du * a * a - c.w_ddu * (a - a_prev) ** 2
         if c.w_fine:
             r -= c.w_fine * (1.0 - math.exp(-(e_deg / c.fine_scale) ** 2))
+        if c.w_omega:
+            r -= c.w_omega * math.exp(-(e_deg / c.omega_gate) ** 2) * min((w_f / c.omega_scale) ** 2, c.omega_cap)
         return c.reward_scale * r
 
     def on_D(self, msg):
@@ -163,7 +187,7 @@ class EpisodeEnv:
         o = np.array(ov, dtype=np.float32)
         info = {'n': n, 'o': o}
         if self.prev_o is not None:
-            r = self._reward(e_deg, x_pol, self.prev_a)
+            r = self._reward(e_deg, x_pol, self.prev_a, self.wf)
             self.trans.append((self.prev_o, a_store, r, o, 0.0))
             self.ret += r
             row[9] = r

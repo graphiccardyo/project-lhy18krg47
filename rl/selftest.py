@@ -432,6 +432,24 @@ def t_fork(tmp):
     check('fork 이어 하기: 시작 때 PID 기준선 다시, 같은 에피소드에서 중복 없음, 학습 6 ep 까지', s['state'] == 'done'
           and s['episode'] == 6 and eps.count(4) == 1 and s['baseline']['episode'] >= 4, f'{s["state"]}, 기준선 {eps}')
     tr.rec.close()
+    # 보상 재라벨: 원본 식 재계산 = 저장 보상, 감쇠 항·w_ddu 를 더하면 보상이 내려감, 새 설정이 config.json 에
+    r3 = fork(src, 'ep00004', os.path.join(tmp, 'fork3'), critic_steps=0, log=lambda s: None,
+              overrides={'env': {'w_omega': 1.0, 'w_ddu': 0.3}})
+    rl_ = r3['relabel'] or {}
+    with open(os.path.join(tmp, 'fork3', 'config.json'), encoding='utf-8') as f:
+        c3 = json.load(f)
+    check('fork --config 보상 변경 → 재라벨 (원본 식 재계산 오차 < 1e-5, 평균 보상 감소, 설정 저장)',
+          rl_ and rl_['check_max_err'] < 1e-5 and rl_['mean_new'] < rl_['mean_old'] and c3['env']['w_omega'] == 1.0
+          and c3['env']['w_ddu'] == 0.3, str(rl_))
+    r4 = fork(src, 'ep00004', os.path.join(tmp, 'fork4'), critic_steps=0, log=lambda s: None)
+    check('fork 보상 설정 그대로면 재라벨 없음', r4['relabel'] is None)
+    bad = False
+    try:
+        fork(src, 'ep00004', os.path.join(tmp, 'fork5'), critic_steps=0, log=lambda s: None,
+             overrides={'env': {'th_scale': 5.0}})
+    except SystemExit:
+        bad = True
+    check('fork 관측 정의가 바뀌면 거부', bad)
 
 
 def t_play(tmp):
@@ -541,6 +559,21 @@ def t_steady(tmp):
     check('정밀 보상: 단조 감소, 0.5° 벌점 비중 ↑ (8°/0.5° 비 < 20, 옛 보상은 > 50)',
           all(a > b for a, b in zip(r, r[1:])) and r[4] / r[2] < 20 and r0[1] / r0[0] > 50,
           f'새 {[round(x, 4) for x in r]}, 비 {r[4] / r[2]:.1f} (옛 {r0[1] / r0[0]:.1f})')
+    cd = Config()
+    cd.env.w_omega = 1.0
+    ed = EpisodeEnv(cd)
+    near = ed._reward(0.2, 0.0, 0.0, 15.0) - ed._reward(0.2, 0.0, 0.0, 0.0)
+    far = ed._reward(8.0, 0.0, 0.0, 15.0) - ed._reward(8.0, 0.0, 0.0, 0.0)
+    capd = ed._reward(0.0, 0.0, 0.0, 500.0) - ed._reward(0.0, 0.0, 0.0, 0.0)
+    check('감쇠 항: 기준 근처 각속도에 벌점, 기준에서 멀면 게이트로 꺼짐, 상한 있음 (기본 w_omega 0 = 끔)',
+          near < -0.01 and abs(far) < 1e-6 and abs(capd + cd.env.reward_scale * cd.env.omega_cap) < 1e-9
+          and Config().env.w_omega == 0.0, f'근처 {near:.4f}, 멀리 {far:.2e}, 상한 {capd:.4f}')
+    from .env import reward_from_obs
+    rows_o = np.array([[0.02, 0, 0.15, 0, 0, 0.3, 0, 0]], np.float32)
+    rows_o2 = np.array([[0.03, 0, 0.12, 0, 0, 0.5, 0, 0]], np.float32)
+    rv = reward_from_obs(cd, rows_o, np.array([[0.5]]), rows_o2)[0]
+    rs = ed._reward(0.3, 0.25, 0.09, 12.0)
+    check('reward_from_obs = EpisodeEnv._reward (o2 의 오차·각속도, 행동 곡선)', abs(rv - rs) < 1e-6, f'{rv:.6f} vs {rs:.6f}')
     d = to_dict(cfg)
     for k in ('obs_efine', 'w_fine', 'efine_scale', 'fine_scale', 'ki_assist'):
         d['env'].pop(k)

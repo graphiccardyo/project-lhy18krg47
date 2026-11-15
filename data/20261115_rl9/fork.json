@@ -1,0 +1,77 @@
+{
+ "src": "C:\\Users\\avalo\\Desktop\\aeropendulum-main\\data\\20261115_rl8",
+ "snapshot": "best",
+ "snapshot_meta": {
+  "name": "best",
+  "kind": "best",
+  "episode": 120,
+  "decisions": 155844,
+  "updates": 150882,
+  "eval_rms": 1.8813,
+  "recent_eval_rms": 1.8813,
+  "time": "2026-11-15T06:21:04",
+  "elapsed_s": 5786.2,
+  "obs_dim": 8,
+  "alpha": 0.004704
+ },
+ "cut_row": 164,
+ "cut_transitions": 155844,
+ "max_gap_deg": 3.0,
+ "gap_window_s": 10.0,
+ "kept_transitions": 155844,
+ "relabel": {
+  "changed": {
+   "w_ddu": [
+    0.1,
+    0.3
+   ],
+   "w_omega": [
+    0.0,
+    1.0
+   ]
+  },
+  "check_max_err": 6.674145192064884e-08,
+  "check_p99_err": 2.4669140804567393e-08,
+  "mean_old": -0.08477839827537537,
+  "mean_new": -0.09254890570377153,
+  "terminal": 0
+ },
+ "dropped_transitions": 0,
+ "critic_steps": 20000,
+ "critic_q_loss": [
+  0.07426,
+  0.0518,
+  0.08107,
+  0.08017,
+  0.23432,
+  0.05817,
+  0.07566,
+  0.06313,
+  0.24795,
+  0.05315,
+  0.04853,
+  0.08903,
+  0.27137,
+  0.08665,
+  0.06959,
+  0.09225,
+  0.09786,
+  0.31987,
+  0.0789,
+  0.07978
+ ],
+ "alpha": 0.004703566897660494,
+ "keep_baseline": false,
+ "overrides": {
+  "env": {
+   "w_omega": 1.0,
+   "w_ddu": 0.3
+  }
+ },
+ "copied_snapshots": [
+  "best",
+  "ep00050",
+  "ep00100"
+ ],
+ "time": "2026-11-15T14:26:25"
+}

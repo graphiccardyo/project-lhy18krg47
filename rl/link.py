@@ -138,8 +138,9 @@ class BaseLink:
             if sink:
                 sink(m)
 
-    def hello(self, timeout: float = 4.0, sink=None) -> str:
-        """HELLO → READY. RL 펌웨어(AEROPEND_RL)가 아니면 LinkError."""
+    def hello(self, timeout: float = 4.0, sink=None, require_rl: bool = True) -> str:
+        """HELLO → READY. require_rl 이면 RL 펌웨어(AEROPEND_RL)가 아닐 때 LinkError
+        (rl.imu_check 는 False: 실험용 펌웨어 AEROPEND_LAB 도 STOP·GET·STREAM·D 줄 형식이 같음)."""
         t_end = self.now() + timeout
         while self.now() < t_end:
             try:
@@ -150,7 +151,7 @@ class BaseLink:
                 continue
             if m.kind == 'READY':
                 fw = ' '.join(m.words)
-                if not fw.startswith('AEROPEND_RL'):
+                if require_rl and not fw.startswith('AEROPEND_RL'):
                     raise LinkError(f'RL 펌웨어가 아닙니다: "{fw}" (AEROPEND_RL 필요)')
                 self.fw = fw
                 # 부팅 메시지의 READY 였을 수 있으므로, HELLO 응답 끝(CALVAL)까지 읽어 큐를 비움

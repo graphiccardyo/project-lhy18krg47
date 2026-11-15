@@ -5,6 +5,7 @@
     python -m rl.imu_check --fake --fast           가짜 보드로 동작 확인
 
 보내는 명령: HELLO, GET, STOP, STREAM <div> 뿐 (REF·RUN·U·CAL·ZERO·BETA 없음).
+RL 펌웨어(AEROPEND_RL)와 실험용 펌웨어(AEROPEND_LAB) 모두 됩니다(같은 명령·D 줄 형식).
 모터가 꺼진 채 D 줄을 모아 다음을 계산합니다.
 - 잔여 자이로 편향 = 정지 중 ω 평균 [°/s] (보드가 저장된 gyroBias 를 뺀 뒤의 값)
 - θ 표류율 = θ 의 기울기 [°/s], θ − θacc 간극의 처음·끝, θacc 기울기(가속도계는 표류하지 않아야 함)
@@ -27,7 +28,7 @@ def run(link, secs: float = 60.0, div: int = 2, log=print) -> dict:
     lines = []
     link.open()
     try:
-        fw = link.hello(sink=lambda m: lines.append(m))
+        fw = link.hello(sink=lambda m: lines.append(m), require_rl=False)   # 실험용 펌웨어에서도 됨
         m = link.request('STOP', 'EVT', timeout=2.0, sink=lambda m: lines.append(m))
         cfgm = link.request('GET', 'CFG', timeout=2.0, sink=lambda m: lines.append(m))
         kv = dict(cfgm.kv or {})

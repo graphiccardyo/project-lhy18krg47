@@ -16,7 +16,7 @@
 python analysis/aero_analyze.py data/20261113_run1
 python analysis/aero_model_fit.py --est "data/20261113_run1/aero_CHIRP_*.csv" --val "data/20261113_run1/aero_CHIRP_*.csv" "data/20261113_run1/aero_STEP_*.csv"
 python analysis/aero_model_fit.py --est "data/20261113_run1/aero_CHIRP_*.csv" --val "data/20261113_run1/aero_CHIRP_*.csv" "data/20261113_run1/aero_STEP_*.csv" --model 0.14 0.319 0.021 2.84 0.136 0.05 6
-python analysis/aero_closedloop.py data/20261113_run3      # 느린 경로(Ks, Tc)를 정한 폐루프 비교
+python analysis/aero_closedloop.py data/20261113_run3 --model 0.14 0.319 0.021 2.84 0.136 0.05 6 --margin-k 0.12 0.14 0.24      # 느린 경로(Ks, Tc)를 정한 폐루프 비교 (11-15 뒤 기본 모델이 바뀌어 --model 필요)
 ```
 그림: `static_map.png`, `dynamic_fit.png`(2차 모델 OE 맞춤, 참고용), `ringing.png`, `model_fit.png`(주파수응답 맞춤), `model_check.png`(**최종 모델** 주파수응답 + 시간영역)
 
