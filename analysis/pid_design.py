@@ -1,11 +1,13 @@
 """Aeropendulum PID 설계·검토 (식별 모델 기반)
 
-플랜트 (2026-11-13 기구 수정 후, data/20261113_run1/analysis/REPORT.md, θ≈20°·PWM≈140 소신호):
+플랜트 (2026-11-15 재식별, data/20261115_run1/analysis/REPORT.md, θ≈20°·PWM≈150 소신호):
     P(s) = K e^(-Ls) / (T s + 1) · ωr² / (s² + 2ζr ωr s + ωr²)  +  Ks e^(-Ls) / (Tc s + 1)   [deg/PWM]
-    K = 0.14 (빠른 경로, 0.12–0.24: 20° 릴레이 0.15, 30° 릴레이 0.24), T = 0.319 s, L = 0.021 s,
-    ωr = 2π·2.84 rad/s (2.84 Hz), ζr = 0.136, 느린 경로 Ks = 0.05, Tc = 6 s (케이블·크리프 추정, 정적 이득 K + Ks ≈ 0.19)
-    폐루프 실측 검증: data/20261113_run3/analysis/REPORT.md
-    (기구 수정 전 11-06 모델: K 0.12–0.21, T 0.328, L 0.016, 3.47 Hz ζ 0.123, 느린 경로 없음)
+    K = 0.164 (빠른 경로; 강인성 평가 0.12–0.23, 0.23 = 30° 의 더 낮고 약한 공진 2.26 Hz ζ 0.066 을 공칭 모양의 등가 이득으로),
+    T = 0.324 s, L = 0.024 s, ωr = 2π·2.35 rad/s (2.35 Hz), ζr = 0.084,
+    느린 경로 Ks = 0.12, Tc = 3 s (run2 폐루프 스텝 다섯 기록으로 맞춤, 정적 이득 K + Ks ≈ 0.28)
+    검증: 릴레이 Ku 4.87 / Tu 0.439 s (모델 5.01 / 0.430 s), 폐루프 스텝 data/20261115_run2 (θ 적합 87–91%)
+    이전 모델: 11-13 (기구 수정 직후) K 0.14, T 0.319, L 0.021, 2.84 Hz ζ 0.136, Ks 0.05 Tc 6 — 공진이 서서히 내려가
+              11-15 에 2.35 Hz (한계 이득 절반). 11-06 (기구 수정 전) K 0.12–0.21, T 0.328, L 0.016, 3.47 Hz ζ 0.123
 
 제어기 (펌웨어와 동일한 구조, Ts = 10 ms):
     u = ff + Kp·e + Ki·∫e dt − Kd·ω_f      (D 는 자이로 각속도 ω 를 10 Hz 저역통과해 측정값에 적용 → 기준 변화 시 킥 없음)
@@ -13,10 +15,13 @@
     출력 포화 [0, 255] + 적분 조건부 정지(anti-windup)
 
 평가:
-    강인성 = 최대 감도 Ms = max|1/(1+L)| (작을수록 강인, 1.4–2.0 권장) 를 K∈{0.12,0.14,0.24}, ωr ±10% 에서 계산
+    강인성 = 최대 감도 Ms = max|1/(1+L)| (작을수록 강인, 1.4–2.0 권장) 를 K∈{0.12,0.164,0.23}, ωr ±10% 에서 계산
     시간응답 = 기준 20°→25° 스텝을 1 ms 연속 플랜트 + 10 ms 이산 제어기로 시뮬레이션 (자이로 진동 잡음 포함)
 
-사용: python analysis/pid_design.py   → analysis/pid_design/ 아래 summary.txt, *.png
+사용: python analysis/pid_design.py   → analysis/pid_design/ 아래 summary.txt, *.png   (11-15 모델)
+      python analysis/pid_design.py --model K T L fr zr Ks Tc --kset K1 K2 K3 --out <폴더>
+         다른 식별 모델로 설계 (fr 는 Hz). --kset = 강인성 평가 K 3개(가운데가 공칭), 공진은 ±10%.
+         예 (11-13 모델 다시 보기): --model 0.14 0.319 0.021 2.84 0.136 0.05 6 --kset 0.12 0.14 0.24 --out <폴더>
 """
 import os
 import numpy as np
@@ -26,17 +31,19 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 plt.rcParams['font.family'] = ['Malgun Gothic', 'DejaVu Sans']; plt.rcParams['axes.unicode_minus'] = False
 
-T, L, WR, ZR, TS = 0.319, 0.021, 2 * np.pi * 2.84, 0.136, 0.01
-KS, TC = 0.05, 6.0                    # 느린 병렬 경로 Ks/(Tc s+1) (11-13 기구: 케이블·피벗 크리프로 추정)
-K_SET = (0.12, 0.14, 0.24)
+T, L, WR, ZR, TS = 0.324, 0.024, 2 * np.pi * 2.35, 0.084, 0.01     # 11-15 재식별 (data/20261115_run1)
+KS, TC = 0.12, 3.0                    # 느린 병렬 경로 Ks/(Tc s+1) (케이블·피벗 크리프; 11-15 run2 폐루프 스텝으로 맞춤)
+K_SET = (0.12, 0.164, 0.23)
 WR_SET = (0.9 * WR, WR, 1.1 * WR)
-K_NOM = 0.14
+K_NOM = 0.164
 TAU_D = 1 / (2 * np.pi * 10)          # D 항 저역통과 (10 Hz)
 OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'pid_design')
 W = np.geomspace(0.05, 300, 6000)
 
 
-def plant(w, K=K_NOM, wr=WR):
+def plant(w, K=None, wr=None):
+    K = K_NOM if K is None else K      # 기본값을 정의 시점이 아니라 호출 시점에 (--model 로 바꾼 값 반영)
+    wr = WR if wr is None else wr
     s = 1j * w
     return (K / (T * s + 1) * wr ** 2 / (s ** 2 + 2 * ZR * wr * s + wr ** 2) + KS / (TC * s + 1)) * np.exp(-s * L)
 
@@ -53,7 +60,9 @@ def ctrl(w, kp, ki, kd, n=None):
     return (kp + ki / s + kd * s / (TAU_D * s + 1)) * notch(w, n) * zoh
 
 
-def margins(kp, ki, kd, n=None, K=K_NOM, wr=WR):
+def margins(kp, ki, kd, n=None, K=None, wr=None):
+    K = K_NOM if K is None else K
+    wr = WR if wr is None else wr
     Lw = ctrl(W, kp, ki, kd, n) * plant(W, K, wr)
     Ms = np.max(1 / np.abs(1 + Lw))
     mag = np.abs(Lw); ph = np.unwrap(np.angle(Lw))
@@ -106,10 +115,14 @@ def plant_ss(K, wr):
     return A, B, C
 
 
-def simulate(kp, ki, kd, n=None, K=K_NOM, wr=WR, r0=20.0, r1=25.0, tstep=1.0, tend=6.0, ff=150.0, noise=True, seed=1,
-             ks=KS, tc=TC, umin=0.0, umax=255.0):
+def simulate(kp, ki, kd, n=None, K=None, wr=None, r0=20.0, r1=25.0, tstep=1.0, tend=6.0, ff=150.0, noise=True, seed=1,
+             ks=None, tc=None, umin=0.0, umax=255.0):
     """기준 r0→r1 스텝. 플랜트는 운전점 편차 모델(θ0 = r0 에서 ff 로 평형이라고 가정).
     ks/tc = 느린 병렬 경로, umin/umax = 펌웨어 출력 포화(폐루프 최소 PWM·최대 PWM)"""
+    K = K_NOM if K is None else K
+    wr = WR if wr is None else wr
+    ks = KS if ks is None else ks
+    tc = TC if tc is None else tc
     A, B, C = plant_ss(K, wr)
     dt = 0.001; Ad = linalg.expm(A * dt); Bd = np.linalg.solve(A, (Ad - np.eye(len(A))) @ B)
     nsub = int(TS / dt); nd = int(round(L / dt))
@@ -173,7 +186,8 @@ def best_gain(make, lo, hi, ms_max, n=None):
     return lo
 
 
-def ziegler_nichols(K=K_NOM):
+def ziegler_nichols(K=None):
+    K = K_NOM if K is None else K
     Pz = plant(W, K) * np.exp(-1j * W * TS / 2)
     ph = np.unwrap(np.angle(Pz)); i = np.where(ph <= -np.pi)[0][0]
     Ku = 1 / np.abs(Pz[i]); Tu = 2 * np.pi / W[i]
@@ -204,7 +218,8 @@ def main():
     zn = {'Z-N P': (0.5 * Ku, 0, 0), 'Z-N PI': (0.45 * Ku, 0.45 * Ku / (Tu / 1.2), 0), 'Z-N PID': (0.6 * Ku, 0.6 * Ku / (Tu / 2), 0.6 * Ku * Tu / 8)}
     for k, v in zn.items(): designs[k] = (v, None)
     designs['Z-N PID + 노치'] = (zn['Z-N PID'], NOTCH)
-    designs['손튜닝 PID (11-13 프리셋)'] = ((0.9, 7.0, 0.02), None)     # data/20261113_run3/aeropend_settings_20261113.json
+    designs['손튜닝 PID (11-13 프리셋)'] = ((0.9, 7.0, 0.02), None)     # data/20261113_run3/aeropend_settings_20261113.json (RL 학습기 PID)
+    designs['11-13 권장 PI+노치 2.84Hz'] = ((5.40, 16.9, 0.0), (2 * np.pi * 2.84, 0.15, 0.7))   # 11-13 모델 설계 (시험 전)
     Ku2, _ = ziegler_nichols(K_SET[-1])
     say('  (K=%.2f 이면 Ku = %.2f — 이득 변동만으로 한계가 %.0f%% 줄어듦)' % (K_SET[-1], Ku2, 100 * (1 - Ku2 / Ku)))
 
@@ -256,4 +271,21 @@ def main():
 
 
 if __name__ == '__main__':
+    import argparse
+    ap = argparse.ArgumentParser(description='식별 모델 기반 PID 설계·검토')
+    ap.add_argument('--model', nargs=7, type=float, metavar=('K', 'T', 'L', 'fr', 'zr', 'Ks', 'Tc'),
+                    help='빠른 경로 K, T[s], L[s], 공진 fr[Hz], ζr, 느린 경로 Ks, Tc[s] (기본 11-13 모델)')
+    ap.add_argument('--kset', nargs=3, type=float, help='강인성 평가 K 3개 (가운데 = 공칭, 기본 0.12 0.14 0.24)')
+    ap.add_argument('--out', help='결과 폴더 (기본 analysis/pid_design)')
+    a = ap.parse_args()
+    if a.model:
+        K_NOM, T, L, fr, ZR, KS, TC = a.model
+        WR = 2 * np.pi * fr
+        WR_SET = (0.9 * WR, WR, 1.1 * WR)
+        K_SET = (0.8 * K_NOM, K_NOM, 1.4 * K_NOM)
+    if a.kset:
+        K_SET = tuple(a.kset)
+        K_NOM = K_SET[1]
+    if a.out:
+        OUT = a.out
     main()

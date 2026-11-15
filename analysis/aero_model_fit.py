@@ -8,7 +8,7 @@
                                     --val data/20261106_run3/aero_CHIRP_20261106_1434*.csv data/20261106_run2/aero_STEP_*.csv ...
   추정용 CHIRP 들의 주파수응답(평균)에 맞추고, --val 기록 각각에 시뮬레이션해 적합도를 보고.
   CHIRP 검증은 가진 구간의 평균을 뺀 뒤 비교(운전점 오프셋·드리프트 영향 제거), STEP 은 pre 운전점 기준.
-  --model K T L fr zr [Ks Tc]  맞춤 없이 주어진 모델을 검증. Ks·Tc 는 느린 병렬 경로 Ks e^(-Ls)/(Tc s+1) (11-13 기구, 케이블·크리프)
+  --model K T L fr zr [Ks Tc]  맞춤 없이 주어진 모델을 검증. Ks·Tc 는 느린 병렬 경로 Ks e^(-Ls)/(Tc s+1) (케이블·크리프; 11-13 0.05·6 s, 11-15 0.12·3 s)
                                결과 파일 이름은 model_check.png / model_check.txt
 결과: 첫 추정 파일 폴더의 analysis/ 아래 model_fit.png, model_fit.txt
 """

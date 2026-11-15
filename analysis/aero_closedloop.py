@@ -2,7 +2,9 @@
 
 사용:
   python analysis/aero_closedloop.py data/20261113_run2 data/20261113_run3 [--model K T L fr zr [Ks Tc]] [--out …]
-  --model 기본값 = 2026-11-13 기구 수정 후 모델 (data/20261113_run1/analysis/REPORT.md)
+  --model 기본값 = 2026-11-15 재식별 모델 (data/20261115_run1·run2/analysis/REPORT.md).
+          11-13 기록을 그 보고서 숫자대로 재현하려면 --model 0.14 0.319 0.021 2.84 0.136 0.05 6 --margin-k 0.12 0.14 0.24
+  --margin-k K1 K2 K3  §3 여유 표의 빠른 경로 K (기본 0.12 0.164 0.23)
   모델: G(s) = K e^(−Ls)/(T s+1) · ωr²/(s²+2ζr ωr s+ωr²)  +  Ks e^(−Ls)/(Tc s+1)   [deg/PWM]
         (뒤의 항 = 느린 병렬 경로(케이블·피벗 크리프로 추정). 정적 이득 = K + Ks)
 
@@ -32,8 +34,8 @@ import aero_analyze as A  # noqa: E402
 
 TS = 0.01
 TAU_D = 0.0159                      # 펌웨어 D 항 저역통과 시정수 (10 Hz)
-MODEL = dict(K=0.14, T=0.319, L=0.021, fr=2.84, zr=0.136, Ks=0.05, Tc=6.0)   # 11-13 기구 수정 후 (data/20261113_run1)
-MARGIN_K = (0.12, 0.14, 0.24)        # 여유 계산 K (빠른 경로): 하한 / 공칭(20°) / 30° 릴레이
+MODEL = dict(K=0.164, T=0.324, L=0.024, fr=2.35, zr=0.084, Ks=0.12, Tc=3.0)   # 11-15 재식별 (data/20261115_run1, 느린 경로 run2)
+MARGIN_K = (0.12, 0.164, 0.23)       # 여유 계산 K (빠른 경로): 하한 / 공칭(20°) / 30° (더 낮고 약한 공진의 등가 이득)
 K_GRID = np.round(np.arange(0.08, 0.301, 0.005), 3)
 W = np.geomspace(0.05, 300, 6000)
 
@@ -181,7 +183,8 @@ def main(dirs, m, out):
     say('%-14s %-34s %4s | %-28s | %-28s | %-28s | %5s %6s %6s' % (
         '기록', '제어기', 'umax', '실측 tr / OS / ess / 진동σ', '모델(공칭K) tr / OS / ess', '모델(최적K) tr / OS / ess',
         '최적K', '적합θ', '적합u'))
-    fig, axs = plt.subplots(sum(r['type'] == 'CLSTEP' for r, _ in recs), 2, figsize=(14, 2.6 * len(recs)), squeeze=False)
+    fig, axs = plt.subplots(max(1, sum(r['type'] == 'CLSTEP' for r, _ in recs)), 2, figsize=(14, 2.6 * max(1, len(recs))),
+                            squeeze=False)   # CLSTEP 이 없는 run(개루프 + RELAY 만)에서도 그림을 만들 수 있게
     row = 0; rows = []
     for r, q in recs:
         if r['type'] != 'CLSTEP':
@@ -283,8 +286,10 @@ if __name__ == '__main__':
         if len(vals) == 5:
             m['Ks'] = 0.0
         del a[i:j]
+    if '--margin-k' in a:          # 여유 표의 K 3개 (11-13 기록 재현: --margin-k 0.12 0.14 0.24)
+        i = a.index('--margin-k'); MARGIN_K = tuple(map(float, a[i + 1:i + 4])); del a[i:i + 4]
     out = None
     if '--out' in a:
         i = a.index('--out'); out = a[i + 1]; del a[i:i + 2]
-    dirs = a or ['data/20261113_run2', 'data/20261113_run3']
+    dirs = a or ['data/20261115_run2']
     main(dirs, m, out or os.path.join(dirs[-1], 'analysis'))

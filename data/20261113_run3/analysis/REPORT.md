@@ -14,9 +14,9 @@
 
 재현:
 ```
-python analysis/aero_closedloop.py data/20261113_run3                 # 새 모델 → closedloop.txt, closedloop_fit.png, relay_fit.png
-python analysis/aero_closedloop.py data/20261113_run3 --model 0.15 0.328 0.016 3.47 0.123 --out <임시 폴더>   # 11-06 모델 비교
-python analysis/pid_design.py                                          # 새 모델로 설계 다시 (analysis/pid_design/)
+python analysis/aero_closedloop.py data/20261113_run3 --model 0.14 0.319 0.021 2.84 0.136 0.05 6 --margin-k 0.12 0.14 0.24   # 11-13 모델 → closedloop.txt, closedloop_fit.png, relay_fit.png (11-15 뒤 기본 모델이 바뀌어 --model 필요)
+python analysis/aero_closedloop.py data/20261113_run3 --model 0.15 0.328 0.016 3.47 0.123 --margin-k 0.12 0.14 0.24 --out <임시 폴더>   # 11-06 모델 비교
+python analysis/pid_design.py --model 0.14 0.319 0.021 2.84 0.136 0.05 6 --kset 0.12 0.14 0.24 --out <폴더>   # 11-13 모델 설계 (지금 기본값은 11-15 모델)
 ```
 
 방법: run2와 같습니다. 스텝 2 s 전 평형에서 시작해 펌웨어와 같은 `pidStep`(최소 PWM 40, 최대 PWM 210 포함)과 모델로 시뮬레이션했습니다. 잡음·마찰·케이블은 넣지 않았습니다.

@@ -3,7 +3,8 @@
 - 모든 숫자는 여기 dataclass 기본값에 있고, JSON 으로 저장/읽기 합니다(`load_config`, `save_config`).
 - JSON 에는 바꾸고 싶은 항목만 적어도 됩니다(나머지는 기본값). 모르는 키는 오류로 알립니다.
 - "재식별" 표시가 붙은 값은 플랜트를 다시 식별하면 바꿔 끼울 값입니다.
-  현재 기본값 = 2026-11-13 기구 수정 후 모델 (docs/RESULTS.md §한눈에·§3, data/20261113_run3/analysis/REPORT.md §6).
+  현재 기본값 = 2026-11-15 재식별 모델 (data/20261115_run1·run2/analysis/REPORT.md). 실행 폴더의 config.json 은
+  플랜트 값을 모두 저장하므로 이전 실행(11-13 모델)을 가짜 보드로 이어 하면 그때 값 그대로입니다.
 """
 from __future__ import annotations
 
@@ -12,7 +13,14 @@ import json
 from dataclasses import dataclass, field
 from typing import Any
 
-# 11-13 계단 2회 평균 정적 특성 (PWM → θ [deg]). lab/sim.js 의 MAP 과 같은 값.   [재식별]
+# 11-15 계단 1회 정적 특성 (PWM → θ [deg], data/20261115_run1 STAIR_124525, Madgwick θ). lab/sim.js 의 MAP 과 같은 값.
+# PWM 200 위에서 추력이 거의 늘지 않음 (250 → 38.6°, 11-13 은 53.3°). 255 는 외삽.   [재식별]
+STATIC_MAP_1115 = [
+    [0, 0.0], [30, 0.0], [50, 1.6], [60, 1.6], [70, 3.9], [80, 5.4], [90, 7.3], [100, 8.7], [110, 10.8],
+    [120, 13.3], [130, 15.4], [140, 17.7], [150, 19.8], [160, 22.6], [170, 25.2], [180, 26.6], [190, 27.9],
+    [200, 29.9], [210, 31.6], [220, 32.5], [230, 35.5], [240, 37.5], [250, 38.6], [255, 39.2],
+]
+# 이전 기준 (11-13 계단 2회 평균, 기구 수정 직후)
 STATIC_MAP_1113 = [
     [0, 0.0], [30, 0.0], [50, 1.95], [60, 3.0], [70, 4.8], [80, 6.75], [90, 8.7], [100, 11.35], [110, 13.55],
     [120, 15.3], [130, 17.1], [140, 18.9], [150, 20.8], [160, 22.9], [170, 25.6], [180, 27.6], [190, 29.95],
@@ -28,22 +36,22 @@ class PlantCfg:
     큰 신호는 정적 지도로: 빠른 경로 입력 = (K/K_nom)·f·map(u), 느린 경로 = (Ks/Ks_nom)·(1−f)·map(u),
     f = K_nom/(K_nom+Ks_nom). 그래서 운전점에 따라 국소 이득이 바뀝니다(20° 0.15 → 30° 0.24 경향).
     """
-    static_map: list = field(default_factory=lambda: [list(p) for p in STATIC_MAP_1113])  # [재식별]
-    K: float = 0.14          # 빠른 이득 [deg/PWM]                                    [재식별]
-    Ks: float = 0.05         # 느린 경로 이득 (케이블 점탄성·피벗 크리프)             [재식별]
-    K_nom: float = 0.14      # 정적 지도가 나타내는 공칭 K (지도를 바꾸면 같이)       [재식별]
-    Ks_nom: float = 0.05     # 정적 지도가 나타내는 공칭 Ks                           [재식별]
-    T: float = 0.319         # 1차 지연 시정수 [s]                                    [재식별]
-    Tc: float = 6.0          # 느린 경로 시정수 [s]                                   [재식별]
-    delay_ms: float = 21.0   # 입력 지연 [ms] (DLPF 5 기준)                           [재식별]
-    fr_hz: float = 2.84      # 구조 공진 [Hz]                                         [재식별]
-    zr: float = 0.136        # 공진 감쇠비                                            [재식별]
+    static_map: list = field(default_factory=lambda: [list(p) for p in STATIC_MAP_1115])  # [재식별]
+    K: float = 0.164         # 빠른 이득 [deg/PWM] (11-15 CHIRP)                      [재식별]
+    Ks: float = 0.12         # 느린 경로 이득 (케이블 점탄성·피벗 크리프, 11-15 run2)  [재식별]
+    K_nom: float = 0.164     # 정적 지도가 나타내는 공칭 K (지도를 바꾸면 같이)       [재식별]
+    Ks_nom: float = 0.12     # 정적 지도가 나타내는 공칭 Ks                           [재식별]
+    T: float = 0.324         # 1차 지연 시정수 [s]                                    [재식별]
+    Tc: float = 3.0          # 느린 경로 시정수 [s]                                   [재식별]
+    delay_ms: float = 24.0   # 입력 지연 [ms] (DLPF 5 기준)                           [재식별]
+    fr_hz: float = 2.35      # 구조 공진 [Hz] (30° 에서는 2.26 Hz)                    [재식별]
+    zr: float = 0.084        # 공진 감쇠비 (30° 에서는 0.066)                         [재식별]
     offset_deg: float = 0.0  # 정적 지도 오프셋 [deg] (기록마다 ±3° 차이)
     rest_offset_deg: float = 3.0  # 모터 정지 시 정지 위치가 0° 로 안 돌아옴 (케이블 간섭): 멈출 때마다 ±이 값에서 뽑음
     friction_deg: float = 1.0  # 피벗 마찰 히스테리시스 폭 [deg] (백래시 모델: 정지 위치가 접근 방향에 따라 ±폭/2)
     noise_deg: float = 0.04    # θ 측정 잡음 σ [deg]
     omega_noise: float = 0.5   # ω 백색 잡음 σ [deg/s]
-    vib_amp: float = 9.0       # 프로펠러 진동이 자이로에 실리는 진폭 [deg/s] (11-13: σ 6–7)
+    vib_amp: float = 9.0       # 프로펠러 진동이 자이로에 실리는 진폭 [deg/s] (11-13: σ 6–7, 11-15: 8–12)
     vib_hz: float = 46.3
     acc_noise_deg: float = 4.0  # θacc 잡음 σ (모터 가동 중)
     stall_pwm: float = 30.0     # 이 아래면 모터 정지
@@ -55,8 +63,8 @@ class PlantCfg:
     # 도메인 랜덤화: True 면 RUN RL 마다 아래 범위에서 새로 뽑음 (가짜 보드 전용)
     randomize: bool = False
     dr: dict = field(default_factory=lambda: {
-        'K': [0.11, 0.26, 'log'], 'Ks': [0.0, 0.08], 'Tc': [3.0, 10.0], 'T': [0.27, 0.38],
-        'delay_ms': [15.0, 30.0], 'fr_hz': [2.5, 3.1], 'zr': [0.09, 0.18], 'offset_deg': [-3.0, 3.0],
+        'K': [0.12, 0.23, 'log'], 'Ks': [0.06, 0.16], 'Tc': [2.0, 6.0], 'T': [0.24, 0.38],
+        'delay_ms': [18.0, 32.0], 'fr_hz': [2.15, 2.6], 'zr': [0.06, 0.12], 'offset_deg': [-3.0, 3.0],
         'shock_rate': [0.0, 0.2], 'noise_deg': [0.02, 0.08],
     })
     seed: int = 1
