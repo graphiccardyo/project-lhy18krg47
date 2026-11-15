@@ -13,7 +13,7 @@
 |---|---|---|---|
 | 1 | 개루프 시험: 입력 PWM ↔ 출력 각도 (정적 특성) | ✅ 데이터·분석 완료 | UI ③, [data/20261106_run2](data/20261106_run2/analysis/REPORT.md) |
 | 2 | 개루프 시험: 스텝, 스윕 사인 (+PRBS) | ✅ 데이터·분석 완료 (11-13 기구 수정 후 다시 함) | UI ④, [data/20261113_run1](data/20261113_run1/analysis/REPORT.md) |
-| 3 | 전달함수 추정 → 검증 | ✅ 모델 확정 (아래, 폐루프 실측으로 검증) | UI ⑤, `matlab/`, `analysis/` |
+| 3 | 전달함수 추정 → 검증 | ✅ 모델 확정 (아래, 폐루프 실측으로 검증). 11-15부터 재식별 진행 중 | UI ⑤, `matlab/`, `analysis/` |
 | 4 | 폐루프 스텝 응답 | 🟡 하드웨어 시험 일부 (P, PI, 손튜닝 PID) | UI ⑥, [data/20261113_run2](data/20261113_run2/analysis/REPORT.md) |
 | 5 | PID 설계·시험 | 🟡 손튜닝 PID 시험함, 새 모델 설계(PI + 2.84 Hz 노치)는 **하드웨어 시험 전** | UI ⑥, [analysis/pid_design](analysis/pid_design/REPORT.md) |
 | 6 | Z-N 설계·시험 | 🟡 릴레이·Z-N PID 하드웨어 시험함 (30°에서 진동) | UI ⑥, [data/20261113_run3](data/20261113_run3/analysis/REPORT.md) |
