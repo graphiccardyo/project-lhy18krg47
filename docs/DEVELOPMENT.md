@@ -94,7 +94,7 @@ python analysis/pid_design.py
 
 ## 데이터 관리
 
-- 실험 CSV는 `data/<YYYYMMDD>_run<N>/`에 원본 그대로 넣습니다(수정 금지). 조건(전원 전압, 장착 변경 등)은 `data/README.md`에 한 줄로 남기세요.
+- 실험 CSV는 `data/<YYYYMMDD>_run<N>/`에 원본 그대로 넣습니다(수정 금지). 조건(펌웨어 설정, 장착 변경 등)은 `data/README.md`에 한 줄로 남기세요.
 - 분석 결과는 같은 폴더의 `analysis/`에 두고, 결론은 `analysis/REPORT.md`에 씁니다. 스크립트 출력은 다시 만들 수 있게 명령을 적어 두세요.
 - 큰 결론이 바뀌면 `docs/RESULTS.md`를 갱신합니다.
 
