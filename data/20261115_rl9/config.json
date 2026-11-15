@@ -274,7 +274,7 @@
     "att_gap_win_s": 10.0
   },
   "stop": {
-    "max_hours": 2.0,
+    "max_hours": 3.0,
     "max_episodes": 3000,
     "max_fallbacks": 150
   },

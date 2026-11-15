@@ -17,7 +17,7 @@
 | 4 | 폐루프 스텝 응답 | 🟡 하드웨어 시험 대부분 (11-15: PI + 노치, PID + 노치, Z-N PI·PID·PID + 노치, 30 s 유지; 11-13 모델로 P, PI, 손튜닝 PID). P(11-15 이득)는 아직 | UI ⑥, [data/20261115_run2](data/20261115_run2/analysis/REPORT.md) |
 | 5 | PID 설계·시험 | 🟢 **PI + 2.35 Hz 노치**를 하드웨어에서 확인 (상승 0.57–0.71 s) | UI ⑥, [analysis/pid_design](analysis/pid_design/REPORT.md) |
 | 6 | Z-N 설계·시험 | 🟢 11-15: 릴레이(Ku 4.87, Tu 0.439 s), Z-N PI, **Z-N PID**(발산 없음, 2.34 Hz 리플 지속 → 공진이 Ku·Tu를 정하는 Z-N의 한계), 같은 이득 + 2.35 Hz 노치는 리플 절반·상승 0.60 s. 11-13 모델 Z-N PID는 30°에서 진동 | UI ⑥, [data/20261115_run1](data/20261115_run1/analysis/REPORT.md), [data/20261115_run3](data/20261115_run3/analysis/REPORT.md) |
-| 7 | 강화학습 제어기 | 🟡 실기 SAC 학습 중: 평가 RMS 1.9° (PID 2.4°), 정상상태 편향·리플은 아직 PID보다 큼. 감쇠 보상 실행(rl9) 진행 중 | `rl/`, [진행 기록](docs/RL_HISTORY.md), [firmware/aeropendulum_rl](firmware/aeropendulum_rl/aeropendulum_rl.ino), [data/20261115_rl8](data/20261115_rl8/) |
+| 7 | 강화학습 제어기 | ✅ 실기 SAC(rl8): 평가 RMS 1.9° (PID 2.4°), 정상상태 편향·리플은 PID가 나음. 감쇠 보상(rl9)은 효과 없음 | `rl/`, [진행 기록](docs/RL_HISTORY.md), [firmware/aeropendulum_rl](firmware/aeropendulum_rl/aeropendulum_rl.ino), [data/20261115_rl8](data/20261115_rl8/) |
 
 결과 요약과 근거는 [docs/RESULTS.md](docs/RESULTS.md), 지난 시험(11-06 기구 수정 전, 11-13 기구 수정 직후)은 그 문서의 [이전 기록](docs/RESULTS.md#4-이전-기록)에 있습니다.
 
