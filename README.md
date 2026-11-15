@@ -17,7 +17,7 @@
 | 4 | 폐루프 스텝 응답 | 🟡 하드웨어 시험 일부 (P, PI, 손튜닝 PID) | UI ⑥, [data/20261113_run2](data/20261113_run2/analysis/REPORT.md) |
 | 5 | PID 설계·시험 | 🟡 손튜닝 PID 시험함, 새 모델 설계(PI + 2.84 Hz 노치)는 **하드웨어 시험 전** | UI ⑥, [analysis/pid_design](analysis/pid_design/REPORT.md) |
 | 6 | Z-N 설계·시험 | 🟡 릴레이·Z-N PID 하드웨어 시험함 (30°에서 진동) | UI ⑥, [data/20261113_run3](data/20261113_run3/analysis/REPORT.md) |
-| 7 | 강화학습 제어기 | ⬜ 시작 전 | — |
+| 7 | 강화학습 제어기 | 🟡 실기 SAC 학습 중: 평가 RMS 1.9° (PID 2.4°), 정상상태 편향은 아직 PID보다 큼 | `rl/`, [firmware/aeropendulum_rl](firmware/aeropendulum_rl/aeropendulum_rl.ino), [data/20261115_rl8](data/20261115_rl8/) |
 
 현재 결과 요약은 [docs/RESULTS.md](docs/RESULTS.md)에 있습니다.
 
@@ -46,6 +46,8 @@ G(s) = Δθ/ΔPWM = [ K/(0.319 s + 1) · 17.8²/(s² + 4.85 s + 17.8²) + 0.05/(
 
 ```
 firmware/aeropendulum_lab/   우노 펌웨어 (센서·Madgwick·보정·가진 신호·PID·안전장치) — 단일 .ino
+firmware/aeropendulum_rl/    강화학습용 펌웨어 (PC 가 보낸 PWM 증분 적용 + 안전장치·PID 복귀)
+rl/                          Python SAC 실기 학습기, 가짜 보드, 정책 시험·분기·IMU 점검, 웹 대시보드
 lab/                         실험 UI (index.html + app.js, 시뮬레이터 sim.js, 식별 계산 sysid.js, 차트 chart.js)
 Start-Lab.cmd                Edge 로 lab/index.html 열기
 analysis/                    Python 분석 (데이터 진단, 주파수응답, 모델 맞춤, PID 설계)
@@ -64,6 +66,7 @@ AGENTS.md                    AI 에이전트(코딩 보조)용 작업 지침
 | [docs/HARDWARE.md](docs/HARDWARE.md) | 조립·배선 | 부품, 배선, 전원, 센서 장착, 주의사항 |
 | [docs/RESULTS.md](docs/RESULTS.md) | 보고서·발표 | 실험 데이터, 식별 모델, PID 설계 결과와 근거 |
 | [docs/PROTOCOL.md](docs/PROTOCOL.md) | 개발·분석 | 시리얼 명령/출력 형식, CSV 형식, EEPROM |
+| [rl/README.md](rl/README.md) · [docs/RL_PROTOCOL.md](docs/RL_PROTOCOL.md) | 강화학습 | 학습기 사용법·설정·안전, RL 펌웨어 프로토콜 |
 | [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | 코드 수정하는 팀원 | 도구, 빌드·시험, 코드 구조, 기능 추가 절차, 제약 |
 | [AGENTS.md](AGENTS.md) | AI 에이전트 | 저장소 지도, 지켜야 할 규칙, 검증 방법 |
 

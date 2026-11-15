@@ -1,0 +1,13 @@
+{
+ "name": "best",
+ "kind": "best",
+ "episode": 40,
+ "decisions": 51948,
+ "updates": 46962,
+ "eval_rms": 2.2677,
+ "recent_eval_rms": 2.2677,
+ "time": "2026-11-15T02:39:22",
+ "elapsed_s": 1951.3,
+ "obs_dim": 8,
+ "alpha": 0.006325
+}

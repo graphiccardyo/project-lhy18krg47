@@ -1,0 +1,44 @@
+{
+ "src": "C:\\Users\\avalo\\Desktop\\aeropendulum-main\\data\\20261115_rl3",
+ "snapshot": "ep00050",
+ "snapshot_meta": {
+  "name": "ep00050",
+  "kind": "periodic",
+  "episode": 50,
+  "decisions": 61938,
+  "updates": 59952,
+  "eval_rms": 2.2765,
+  "recent_eval_rms": 2.2677,
+  "time": "2026-11-15T02:46:18",
+  "elapsed_s": 2367.8,
+  "obs_dim": 8,
+  "alpha": 0.005194
+ },
+ "cut_row": 64,
+ "cut_transitions": 61938,
+ "max_gap_deg": 3.0,
+ "gap_window_s": 10.0,
+ "kept_transitions": 50154,
+ "dropped_transitions": 11784,
+ "critic_steps": 10000,
+ "critic_q_loss": [
+  0.12512,
+  0.37745,
+  0.10315,
+  0.09858,
+  0.13789,
+  0.10975,
+  0.12848,
+  0.13295,
+  0.12092,
+  0.15276
+ ],
+ "alpha": 0.005193524993956089,
+ "keep_baseline": false,
+ "overrides": {},
+ "copied_snapshots": [
+  "best",
+  "ep00050"
+ ],
+ "time": "2026-11-15T04:08:40"
+}

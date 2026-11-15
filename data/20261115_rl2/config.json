@@ -1,0 +1,304 @@
+{
+  "plant": {
+    "static_map": [
+      [
+        0,
+        0.0
+      ],
+      [
+        30,
+        0.0
+      ],
+      [
+        50,
+        1.95
+      ],
+      [
+        60,
+        3.0
+      ],
+      [
+        70,
+        4.8
+      ],
+      [
+        80,
+        6.75
+      ],
+      [
+        90,
+        8.7
+      ],
+      [
+        100,
+        11.35
+      ],
+      [
+        110,
+        13.55
+      ],
+      [
+        120,
+        15.3
+      ],
+      [
+        130,
+        17.1
+      ],
+      [
+        140,
+        18.9
+      ],
+      [
+        150,
+        20.8
+      ],
+      [
+        160,
+        22.9
+      ],
+      [
+        170,
+        25.6
+      ],
+      [
+        180,
+        27.6
+      ],
+      [
+        190,
+        29.95
+      ],
+      [
+        200,
+        32.25
+      ],
+      [
+        210,
+        35.2
+      ],
+      [
+        220,
+        38.3
+      ],
+      [
+        230,
+        42.1
+      ],
+      [
+        240,
+        47.25
+      ],
+      [
+        250,
+        53.3
+      ],
+      [
+        255,
+        56.5
+      ]
+    ],
+    "K": 0.14,
+    "Ks": 0.05,
+    "K_nom": 0.14,
+    "Ks_nom": 0.05,
+    "T": 0.319,
+    "Tc": 6.0,
+    "delay_ms": 21.0,
+    "fr_hz": 2.84,
+    "zr": 0.136,
+    "offset_deg": 0.0,
+    "rest_offset_deg": 3.0,
+    "friction_deg": 1.0,
+    "noise_deg": 0.04,
+    "omega_noise": 0.5,
+    "vib_amp": 9.0,
+    "vib_hz": 46.3,
+    "acc_noise_deg": 4.0,
+    "stall_pwm": 30.0,
+    "start_pwm": 45.0,
+    "start_delay": 0.15,
+    "shock_rate": 0.0,
+    "shock_w": [
+      100.0,
+      300.0
+    ],
+    "randomize": false,
+    "dr": {
+      "K": [
+        0.11,
+        0.26,
+        "log"
+      ],
+      "Ks": [
+        0.0,
+        0.08
+      ],
+      "Tc": [
+        3.0,
+        10.0
+      ],
+      "T": [
+        0.27,
+        0.38
+      ],
+      "delay_ms": [
+        15.0,
+        30.0
+      ],
+      "fr_hz": [
+        2.5,
+        3.1
+      ],
+      "zr": [
+        0.09,
+        0.18
+      ],
+      "offset_deg": [
+        -3.0,
+        3.0
+      ],
+      "shock_rate": [
+        0.0,
+        0.2
+      ],
+      "noise_deg": [
+        0.02,
+        0.08
+      ]
+    },
+    "seed": 1
+  },
+  "pid": {
+    "kp": 0.9,
+    "ki": 7.0,
+    "kd": 0.02,
+    "ff": 140,
+    "umin": 40,
+    "notch_cHz": 0,
+    "notch_zz": 150,
+    "notch_zp": 700
+  },
+  "lim": {
+    "pwm_max": 255,
+    "angle_cdeg": 10000,
+    "rev": 0
+  },
+  "rl": {
+    "dec": 2,
+    "lag": 2,
+    "du_max": 10,
+    "u_lo": 40,
+    "u_hi": 255
+  },
+  "safe": {
+    "th_lo_cdeg": -1000,
+    "th_hi_cdeg": 7000,
+    "w_max_cdps": 60000
+  },
+  "episode": {
+    "dur_s": 20.0,
+    "ref_lo": 15.0,
+    "ref_hi": 30.0,
+    "home_deg": null,
+    "step_frac": [
+      0.35,
+      0.65
+    ],
+    "min_step_deg": 4.0,
+    "settle_tol_deg": 2.0,
+    "settle_hold_s": 1.0,
+    "settle_timeout_s": 15.0,
+    "home_min_s": 2.0
+  },
+  "env": {
+    "th_center": 25.0,
+    "th_scale": 10.0,
+    "w_scale": 100.0,
+    "w_lpf_hz": 10.0,
+    "u_center": 125.0,
+    "u_scale": 85.0,
+    "err_scale": 2.0,
+    "err_cap": 16.0,
+    "w_abs": 1.0,
+    "w_du": 0.05,
+    "w_ddu": 0.1,
+    "w_fine": 2.0,
+    "fine_scale": 0.5,
+    "fallback_penalty": 30.0,
+    "abort_penalty": 60.0,
+    "reward_scale": 0.03,
+    "sigma_delta": true,
+    "obs_eint": true,
+    "eint_tau_s": 3.0,
+    "eint_scale": 2.0,
+    "act_pow": 2.0,
+    "obs_efine": true,
+    "efine_scale": 0.5,
+    "ki_assist": 6.0,
+    "ki_band_deg": 0.0
+  },
+  "rest": {
+    "max_on_s": 300.0,
+    "rest_s": 90.0
+  },
+  "sac": {
+    "hidden": 64,
+    "batch": 256,
+    "lr": 0.0003,
+    "gamma": 0.99,
+    "tau": 0.005,
+    "buffer_size": 500000,
+    "warmup_steps": 2500,
+    "utd": 1.0,
+    "init_alpha": 0.2,
+    "target_entropy": -1.0,
+    "log_std_min": -6.0,
+    "log_std_max": 1.0,
+    "seed": 0
+  },
+  "monitor": {
+    "max_overrun_delta": 5,
+    "sat_max_per_s": 50,
+    "sat_consec": 3,
+    "max_miss_frac": 0.2,
+    "link_timeout_s": 2.0,
+    "rest_check_deg": 5.0,
+    "hb_watchdog_s": 20.0
+  },
+  "stop": {
+    "max_hours": 6.0,
+    "max_episodes": 3000,
+    "max_fallbacks": 150
+  },
+  "run": {
+    "eval_every": 10,
+    "eval_refs": [
+      [
+        20.0,
+        30.0,
+        22.0
+      ],
+      [
+        30.0,
+        18.0,
+        28.0
+      ],
+      [
+        25.0,
+        30.0,
+        16.0
+      ]
+    ],
+    "ss_win_s": 3.0,
+    "settle_band_deg": 0.5,
+    "baseline_every": 5,
+    "checkpoint_every": 10,
+    "snapshot_every": 50,
+    "baseline_at_start": true,
+    "save_episode_csv": true,
+    "keep_episode_series": 3,
+    "bench": false
+  },
+  "ts_s": 0.01
+}

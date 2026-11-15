@@ -15,6 +15,8 @@ PC(Python)가 정책을 계산해 결정 샘플마다 `A <du>`(PWM 증분)를 �
 | `record.py` | 실행 폴더 기록 |
 | `train.py` | CLI |
 | `play.py` | 학습 없이 저장된 정책 시험 CLI (`Trainer`의 연결·복귀·에피소드 코드를 그대로 씀) |
+| `fork.py` | 실행 분기: 정책 스냅샷 시점에서 새 실행 폴더(버퍼 자르기·오염 전이 제외·크리틱 재적응) → `--resume` |
+| `imu_check.py` | 정지 상태 IMU 점검(모터 안 돌림, EEPROM 안 바꿈): 잔여 자이로 편향·θ 표류율·θ − θacc 를 Madgwick 보정 한계(β)와 비교 |
 | `bench_test.py` | 프로토콜 적합성 시험 (BENCH 1 전용) + 왕복 지연 측정 |
 | `selftest.py` | 하드웨어 없는 자체 시험 |
 
@@ -64,6 +66,21 @@ Python은 `.venv\Scripts\python.exe`입니다(numpy, scipy, pyserial, torch CPU)
 - 절차·안전은 학습기와 같습니다: 연결·설정 → `REF home` 정착 → `RUN RL` → … → `STOP`. `EVT ABORT`·연결 오류·miss 초과·Ctrl+C 어떤 경우에도 `STOP`을 보내고 끝냅니다. `ZERO`는 보내지 않습니다. `--port`(벤치 아님)이면 시작 전에 모터가 돈다는 안내를 출력합니다.
 - 출력: 표(전체 RMS, 정착 구간 평균 |e|·σ(e), 오버슈트 °/%, 평균 PWM, 정착 구간 PWM σ, miss, FALLBACK)와 `<run_dir>/play/<YYYYMMDD_HHMMSS>/`에 `episodes/*.csv`(학습기와 같은 형식, `mode=play`/`pid`), `play_log.csv`, `events.log`, `config.json`, `summary.json`, `play.png`(시나리오마다 θ·기준, PWM; `--pid`면 PID 겹침).
 
+## 분기 (`rl.fork`, 중간 시점에서 다시)
+
+`checkpoint/`는 덮어써서 마지막 상태만 남으므로, 실행 후반 데이터가 오염됐을 때 그 전으로 돌아가려면 정책 스냅샷에서 새 실행 폴더를 만듭니다(원본은 읽기만).
+
+```powershell
+.venv\Scripts\python.exe -m rl.fork data\20261115_rl3 --snapshot ep00050          # → data\<오늘>_rl<다음>
+.venv\Scripts\python.exe -m rl.train --port COM4 --resume data\20261115_rl4
+```
+
+- 액터 = 스냅샷(α 포함), 버퍼 = 그 스냅샷까지 쌓인 전이(train_log의 `buffer` 열로 자름) 중 θ − θacc 10 s 이동평균이 `--max-gap`(3°, 학습기 감시와 같은 기준)을 넘는 결정 샘플의 전이를 뺀 것.
+- 크리틱은 스냅샷에 없어서 원본 마지막 체크포인트의 크리틱에서 시작해, 거른 버퍼로 크리틱만 `--critic-steps`(10000, 약 10 s) 번 갱신해 스냅샷 액터에 다시 맞춥니다.
+- 진행 상태(학습 에피소드·결정 수·평가 점수·학습 곡선·CSV 번호·경과 시간)는 그 시점 값, 그 뒤의 평가·기준선은 버림. PID 기준선은 비워서 이어 하기 시작 때 다시 잽니다(`--keep-baseline`이면 유지). 설정은 원본 config.json + `--config`(바꿀 항목만).
+- `fork.json`에 출처·제외 수·크리틱 손실, `train_log.csv`에 그 시점까지의 줄(att_gap 다시 계산), 그 시점 이전 스냅샷 복사. 에피소드 CSV는 원본에만 있습니다.
+- 11-15: `20261115_rl3`(진동으로 자이로 편향, 02:15부터 간극 2–4°, 재개 뒤 10–29°) → `20261115_rl4` = ep00050(02:46) 시점, 버퍼 50154/61938(11784개 제외).
+
 ## 웹 대시보드
 
 `train`을 실행하면 기본으로 `http://127.0.0.1:8770/` 대시보드가 같이 뜹니다(시작 시 주소를 출력). 브라우저로 열면 상태 배지, 시작·일시정지·재개·정지 버튼, 숫자 카드, 최근 에피소드 θ·기준·PWM 그래프, 학습 곡선(RMS·평가·PID 기준선), 정상상태 편향 곡선(학습 점·평가 편향과 리플·PID 기준선 이력, 아래에 최근 평가와 PID의 편향·리플·정착 시간·OS), 에피소드별 평균 PWM, 로그를 1초마다 갱신해 보여 줍니다.
@@ -98,6 +115,10 @@ Python은 `.venv\Scripts\python.exe`입니다(numpy, scipy, pyserial, torch CPU)
 - 휴식: 모터 가동 누적 300 s마다 `STOP` 후 90 s. 휴식 끝에 정지 각도 |θ| ≤ 5° 확인(정지 위치가 0°로 안 돌아올 수 있어 너그럽게, `ZERO`는 절대 자동으로 보내지 않음).
 - SAC: 64-64 MLP, 배치 256, γ 0.99, lr 3e-4, τ 0.005, 워밍업 2500 결정(20 s 에피소드로 약 2.5 에피소드) 무작위, 결정당 갱신 1회(에피소드 사이에 몰아서).
 
+### 실기 실행 기록
+
+실행별 설정·결과는 [docs/RESULTS.md §3a](../docs/RESULTS.md#3a-강화학습목표-7-실기-sac-학습-11-14--11-15)와 [data/README.md](../data/README.md)에 있습니다. 현재 기본값(k<sub>I</sub> 6, 20 s 에피소드)과 CAL 다시 + β 0.01로 돌린 `data/20261115_rl8`(학습 130 ep, 약 1 h 45 m)이 현재 최선입니다: 평가 RMS 1.94°(PID 2.41°), 편향 0.29°(PID 0.11°), 정지·FALLBACK 0.
+
 ### 11-14 이후 기본값 변경과 옛 실행
 
 `data/20261114_rl1`은 PWM 상한 210, 기준 15–35°(평가 25→33→16), 관측 7차원, 정밀 항 없음, `w_ddu` 0.02로 돌렸습니다. 33°에서 PWM 210에 붙어 정상상태 오차가 1–1.6° 남았고, 학습 샘플의 12%가 포화였습니다.
@@ -109,7 +130,12 @@ Python은 `.venv\Scripts\python.exe`입니다(numpy, scipy, pyserial, torch CPU)
 ## 안전
 
 - 모터를 돌리는 명령은 `train --port`만 보냅니다. `bench_test`는 `BENCH 1`이 확인돼야 `REF`/`RUN`/`U`를 보내고, `CFG BACKUP`으로 시작해 `CFG RESTORE`로 끝냅니다. `ZERO`·`FACTORY`·보정은 보내지 않습니다.
-- 자동 일시정지(모터 `STOP`, 사람이 `resume`): `EVT ABORT`, 포트 오류·2 s 무수신, `S` 줄 overruns 급증·sat 이상·IMU 오류, 에피소드 miss > 20%, 예상치 못한 `EVT STOP`, 휴식 끝 정지 각도 이상.
+- 자동 일시정지(모터 `STOP`, 사람이 `resume`): `EVT ABORT`, 포트 오류·2 s 무수신, `S` 줄 overruns 급증·sat 이상·IMU 오류, 에피소드 miss > 20%, 예상치 못한 `EVT STOP`, 휴식 끝 정지 각도 이상, **자세 추정 이상**.
+- 자세 추정 감시(`monitor.att_gap_*`): 모터 가동 중 θ − θacc의 10 s 이동평균이 3°를 넘으면 일시정지, 2°를 넘으면 경고(60 s에 한 번). 대시보드 카드 **자세 추정 θ − θacc**에 현재 값이 나옵니다(정상 0.3–0.9°).
+  - 11-15 rl3에서 진동이 커지자 자이로가 모터 가동 중에만 편향돼(진동 정류) Madgwick β 0.004의 보정 예산(≈ 2β = 0.46 °/s, 수평 두 축 공유)을 넘었고, θ가 θacc에서 2–4° → 25–29°까지 떠내려가 `FALLBACK THETA`가 났습니다. 간극은 PWM이 높을수록 빨리 커지고(200 이상에서 +0.5 °/s), 휴식(모터 정지) 중에는 회복됩니다.
+  - 기록을 같은 방식으로 재생하면 정상 실행 3개는 최대 1.8–2.7°로 한 번도 멈추지 않고, rl3은 02:15:16(간극이 커지기 시작한 때)에 멈춥니다. 2 s 창은 무작위 워밍업의 과도 지연으로 정상 실행에서도 3.7°까지 나와 쓰지 않습니다.
+  - 11-15 후속: 정지 점검(`rl.imu_check`)에서 모터를 끈 채로도 진자 축 자이로 편향이 운전 온도에서 +0.57 °/s, 식은 뒤 −0.41 °/s로 약 1 °/s 흔들렸습니다(Y축도 0.9 °/s). 그래서 `CAL`(정지 보정, 따뜻할 때)을 다시 하고 β를 0.004 → 0.01로 올렸습니다(보정 예산 0.46 → 1.15 °/s). β 0.01에서 같은 −0.41 °/s 편향의 정지 간극은 60 s 동안 0.0°로 유지됩니다(β 0.004에서는 −0.8°까지 벌어짐). β는 느린 표류만 바로잡으므로 11-13 모델·PID는 그대로 씁니다. CSV 머리줄 `beta=`로 실행마다 확인할 수 있습니다. 세션 시작 전에 `rl.imu_check`(1분)를 권장합니다.
+  - 멈추면 프로펠러·모터·마운트를 확인하세요. 쉬고 재개하면 간극이 줄어 있을 수 있지만 원인이 남아 있으면 다시 멈춥니다. `rl.play`에도 같이 적용됩니다. 끄려면 `monitor.att_gap_max_deg` 0.
 - 자동 종료: 총 시간, 학습 에피소드 수, FALLBACK 누적. 어떤 예외로 끝나도 `STOP`과 체크포인트를 남깁니다.
 - 학습기 주 스레드가 20 s 넘게 멈추면 하트비트를 끊어 보드가 1 s 뒤 스스로 정지합니다. 프로세스가 죽어도 마찬가지입니다.
 - 보드 쪽 안전장치(각도 한계, `SAFE` → PID 복귀, u_lo/u_hi, du_max, 하트비트)는 PC와 무관하게 동작합니다.
@@ -119,7 +145,7 @@ Python은 `.venv\Scripts\python.exe`입니다(numpy, scipy, pyserial, torch CPU)
 | 파일 | 내용 |
 |---|---|
 | `config.json` | 사용한 설정 전체 |
-| `train_log.csv` | 에피소드마다 한 줄: 종류(train/eval/baseline), 상태(done/fallback/abort), 기준, return, RMS, 스텝 뒤 RMS, 평균 PWM, miss, α, 손실 등 + 구간 지표 `ss_e1`/`ss_e2`(각 구간 마지막 창 평균 e, 부호 있음), `ss_abs`(두 창 평균 \|e\|), `ss_bias`(편향), `ss_ripple`(리플), `ss_pwm_sd`(창 안 PWM σ, 떨림), `settle_s`(정착 시간), `os_pct`(오버슈트), `mean_abs_di`(결정당 적분 증분) |
+| `train_log.csv` | 에피소드마다 한 줄: 종류(train/eval/baseline), 상태(done/fallback/abort), 기준, return, RMS, 스텝 뒤 RMS, 평균 PWM, miss, α, 손실 등 + 구간 지표 `ss_e1`/`ss_e2`(각 구간 마지막 창 평균 e, 부호 있음), `ss_abs`(두 창 평균 \|e\|), `ss_bias`(편향), `ss_ripple`(리플), `ss_pwm_sd`(창 안 PWM σ, 떨림), `settle_s`(정착 시간), `os_pct`(오버슈트), `mean_abs_di`(결정당 적분 증분), `att_gap`(모터 가동 샘플의 평균 θ − θacc) |
 | `episodes/epNNNNN_<종류>.csv` | [PROTOCOL.md](../docs/PROTOCOL.md) CSV 형식(`type=RL`, `# pid` 줄) + 열 끝 `ref_deg,miss,du,reward` (du·reward는 결정 샘플에만) |
 | `checkpoint/` | `sac.pt`(망·타깃·옵티마이저·α), `buffer.npz`, `trainer.json` — `--resume`으로 이어 하기 |
 | `checkpoints/<이름>/` | 정책 스냅샷 `actor.pt` + `meta.json` (위 "스냅샷") |
