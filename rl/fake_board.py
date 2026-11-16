@@ -22,7 +22,7 @@ import numpy as np
 from .config import Config, PlantCfg
 from .plant import Plant
 
-FW_ID = 'AEROPEND_RL 1.0'
+FW_ID = 'AEROPEND_RL 1.2'
 TICK_S = 0.005
 LINK_TIMEOUT_S = 1.0
 MAX_SAMPLES = 120000
@@ -71,6 +71,8 @@ class FakeBoard:
         self.cl_hold = False
         # RL
         self.dec, self.lag, self.dumax, self.ulo, self.uhi = 2, 1, 10, 0, 255
+        self.res = 0                  # 잔차 모드 한계 [PWM] (0 = 증분 모드)
+        self.pid_add = 0              # 잔차 모드 r (PID 출력에 더함)
         self.thlo, self.thhi, self.wmax = -2000, 6000, 40000
         self.rlU = 0
         self.rlDu = 0
@@ -120,7 +122,7 @@ class FakeBoard:
                   f'zz={self.nzz} zp={self.nzp} umin={self.umin}')
 
     def _print_rl(self):
-        self._out(f'RLCFG dec={self.dec} lag={self.lag} dumax={self.dumax} ulo={self.ulo} uhi={self.uhi} '
+        self._out(f'RLCFG dec={self.dec} lag={self.lag} dumax={self.dumax} ulo={self.ulo} uhi={self.uhi} res={self.res} '
                   f'thlo={self.thlo} thhi={self.thhi} wmax={self.wmax}')
 
     def _err(self, code: str):
@@ -155,7 +157,7 @@ class FakeBoard:
         ts = self._ts()
         e = r - self.theta
         self.omF += ts / (0.0159 + ts) * (self.omega - self.omF)
-        v = self.kp * e + self.pidI - self.kd * self.omF
+        v = self.kp * e + self.pidI - self.kd * self.omF + self.pid_add   # 잔차도 노치를 통과 (1.2)
         if self.nfc:
             b0, b1, b2, a1, a2 = self.nb
             y = b0 * v + self.nz1
@@ -180,6 +182,7 @@ class FakeBoard:
         self.prof = None
         self.cl_hold = False
         self.pidI = 0.0
+        self.pid_add = 0
         self.u_manual = 0
         self.phase = 0
         self._apply_motor(0)
@@ -219,17 +222,20 @@ class FakeBoard:
                 return self._err('BAD_ARGS')
             if not ep:
                 return self._err('NOT_RL')
-            self.rlDu = max(-self.dumax, min(self.dumax, v[0]))
+            m = self.res if self.res else self.dumax      # 잔차 모드면 잔차 절댓값 ±res
+            self.rlDu = max(-m, min(m, v[0]))
             self.rlHave = True
             return
         if line.startswith('RL '):
             if ep:
                 return self._err('BUSY')
-            v = _ints(line[3:], 5)
-            if v is None or len(v) != 5 or not (1 <= v[0] <= 20) or not (1 <= v[1] <= v[0]) or not (1 <= v[2] <= 255) \
+            v = _ints(line[3:], 6)
+            if v is not None and len(v) == 5:
+                v.append(0)
+            if v is None or len(v) != 6 or not (0 <= v[5] <= 100) or not (1 <= v[0] <= 20) or not (1 <= v[1] <= v[0]) or not (1 <= v[2] <= 255) \
                     or v[3] < 0 or v[3] >= v[4] or v[4] > 255:
                 return self._err('BAD_ARGS')
-            self.dec, self.lag, self.dumax, self.ulo, self.uhi = v
+            self.dec, self.lag, self.dumax, self.ulo, self.uhi, self.res = v
             return self._print_rl()
         if line.startswith('SAFE '):
             if ep:
@@ -434,6 +440,9 @@ class FakeBoard:
             self.ref = v[0] * 0.01
             self.cl_hold = False
             self._pid_reset()
+            self.pid_add = 0
+            if self.res:                     # 잔차 모드: PID 를 지금 출력에서 이어 감 (적분 = u − ff)
+                self.pidI = max(-255.0, min(255.0, float(self.u_out - self.ff)))
             if self.plant_cfg.randomize:
                 self.plant.randomize()
             self._start_profile('RL', total)
@@ -458,6 +467,7 @@ class FakeBoard:
     # ------------------------------------------------------------------ 샘플
     def _rl_to_pid(self) -> int:
         u0 = self.u_out
+        self.pid_add = 0
         self.prof = None
         self.phase = 0
         self._pid_reset()
@@ -475,13 +485,16 @@ class FakeBoard:
             return self._rl_to_pid()
         if n != 0 and self.rlPh == self.lag % self.dec:
             if self.rlHave:
-                u = self.rlU + self.rlDu
-                hi = min(self.uhi, self.umax)
-                if u < self.ulo:
-                    u = self.ulo
-                if u > hi:
-                    u = hi
-                self.rlU = u
+                if self.res:
+                    self.pid_add = self.rlDu
+                else:
+                    u = self.rlU + self.rlDu
+                    hi = min(self.uhi, self.umax)
+                    if u < self.ulo:
+                        u = self.ulo
+                    if u > hi:
+                        u = hi
+                    self.rlU = u
                 self.rlHave = False
             else:
                 self.rlMiss += 1
@@ -501,6 +514,8 @@ class FakeBoard:
             self.rlPh = 0
         p['n'] += 1
         self.phase = 1
+        if self.res:                         # 잔차 모드: u = PID(ref) + r, [ulo, min(uhi, umax)]
+            return max(self.ulo, min(min(self.uhi, self.umax), self._pid_step(self.ref)))
         return self.rlU
 
     def _clstep(self) -> int:

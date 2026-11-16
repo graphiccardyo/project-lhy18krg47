@@ -1,4 +1,4 @@
-"""RL 프로토콜 적합성 시험 (docs/RL_PROTOCOL.md, AEROPEND_RL 1.0).
+"""RL 프로토콜 적합성 시험 (docs/RL_PROTOCOL.md, AEROPEND_RL 1.2).
 
     python -m rl.bench_test --port COM4        실제 보드 (BENCH 1 에서만 — 모터 핀 LOW)
     python -m rl.bench_test --fake             가짜 보드 실시간 (--latency-ms 7 9 로 실기 왕복 지연 흉내)
@@ -116,8 +116,8 @@ class Bench:
             raise BenchFail(f'BENCH 1 확인 전에는 보내지 않음: {cmd}')
         self.link.send(cmd)
 
-    def set_rl(self, dec, lag, dumax, ulo, uhi):
-        m = self.req(f'RL {dec} {lag} {dumax} {ulo} {uhi}', ('RLCFG', 'ERR'))
+    def set_rl(self, dec, lag, dumax, ulo, uhi, res=None):
+        m = self.req(f'RL {dec} {lag} {dumax} {ulo} {uhi}' + (f' {res}' if res is not None else ''), ('RLCFG', 'ERR'))
         if m.kind != 'RLCFG':
             raise BenchFail(f'RL 설정 실패: {m.raw}')
 
@@ -240,7 +240,8 @@ class Bench:
                 self.req(f'LIM {c["umax"]} {c["alim"]} {c["rev"]}', ('CFG', 'ERR'))
             if 'rl' in i:
                 r = i['rl']
-                self.req(f'RL {r["dec"]} {r["lag"]} {r["dumax"]} {r["ulo"]} {r["uhi"]}', ('RLCFG', 'ERR'))
+                self.req(f'RL {r["dec"]} {r["lag"]} {r["dumax"]} {r["ulo"]} {r["uhi"]}'
+                         + (f' {r["res"]}' if 'res' in r else ''), ('RLCFG', 'ERR'))
                 self.req(f'SAFE {r["thlo"]} {r["thhi"]} {r["wmax"]}', ('RLCFG', 'ERR'))
             if 'pid' in i:
                 p = i['pid']
@@ -286,7 +287,8 @@ class Bench:
         self.log('== RL·SAFE 범위 검사')
         for cmd in ('RL 0 1 10 0 255', 'RL 21 1 10 0 255', 'RL 2 0 10 0 255', 'RL 2 3 10 0 255', 'RL 2 1 0 0 255',
                     'RL 2 1 256 0 255', 'RL 2 1 10 100 100', 'RL 2 1 10 120 100', 'RL 2 1 10 0 256',
-                    'RL 2 1 10 0', 'RL 2 1 10 0 255 9', 'RL 2 1 x 0 255'):
+                    'RL 2 1 10 0', 'RL 2 1 10 0 255 101', 'RL 2 1 10 0 255 -1', 'RL 2 1 10 0 255 9 1',
+                    'RL 2 1 x 0 255'):
             self.expect_err(f'{cmd} → BAD_ARGS', cmd, 'BAD_ARGS')
         out = self.responses('RL 4 4 20 30 200')
         self.check('RL 성공 → RLCFG 한 줄만', [m.kind for m in out] == ['RLCFG'] and
@@ -367,6 +369,46 @@ class Bench:
                    f'최대 {max(f[1] for f in ln) if ln else None}')
         self.check('u_lo 40 아래로 안 내려감', ln and min(f[1] for f in ln) == 40 and ln[-1][1] == 40)
         self.req('LIM 210 18000 0', ('CFG', 'ERR'))
+
+        self.log('== 잔차 모드 (RL 6번째 인자 res, AEROPEND_RL 1.2: 잔차도 노치 통과)')
+        self.stop()
+        out = self.responses('RL 2 2 10 40 210 15')
+        self.check('RL … 15 → RLCFG res=15', [m.kind for m in out] == ['RLCFG'] and out[0].kv.get('res') == '15',
+                   ' | '.join(m.raw for m in out))
+        self.req('PID 900 0 0 140 40', ('PIDCFG', 'ERR'))     # 적분 0: 벤치(θ 고정)에서 PID 출력 ≈ ff + Kp·e 로 일정
+        self.req('NOTCH 0', ('PIDCFG', 'ERR'))
+        self.hold(th0c, 0.4)                                    # REF 유지(u ≈ ff) 에서 시작 → 잔차 모드는 PID 를 이어 감
+        res = self.episode(th0c, 1000, th0c, 2, responder=lambda k, m: 30 if k < 20 else (-5 if k < 40 else None))
+        ln = res['lines']
+        base = [f[1] for f in ln[:2]]
+        mid = [f[1] for f in ln[10:40]]
+        neg = [f[1] for f in ln[50:80]]
+        hold = [f[1] for f in ln[84:]]
+        ok_base = ln and all(abs(u - 140) <= 2 for u in base)
+        ok_mid = mid and all(abs(u - 155) <= 2 for u in mid)          # A 30 → ±15 로 자름: 140 + 15
+        ok_neg = neg and all(abs(u - 135) <= 2 for u in neg)          # A −5 → 135
+        ok_hold = hold and all(abs(u - 135) <= 2 for u in hold)       # 응답 없음 → 잔차 유지 + miss
+        self.check('잔차 모드: u = PID + r (A 를 ±res 로 자름, 절댓값), 응답 없으면 r 유지',
+                   ok_base and ok_mid and ok_neg and ok_hold,
+                   f'시작 {base}, A30 {sorted(set(mid))}, A−5 {sorted(set(neg))}, 유지 {sorted(set(hold))}')
+        self.check('잔차 모드 miss 계수 (k ≥ 40 응답 없음 → 적용 시점 9개)', ln and ln[-1][7] == 9,
+                   f'miss {ln[-1][7] if ln else None}')
+        # 노치 켬: 잔차 계단(0 → 15)도 노치를 지나 공진 대역이 깎임 → 147 근처까지 처졌다가 155 로 (노치 DC 이득 1)
+        self.stop()
+        self.req('NOTCH 235 150 700', ('PIDCFG', 'ERR'))
+        self.hold(th0c, 0.6)
+        res = self.episode(th0c, 1000, th0c, 2, responder=lambda k, m: 15)
+        ln = res['lines']
+        early = [f[1] for f in ln[3:14]]
+        late = [f[1] for f in ln[45:]]
+        self.check('잔차가 노치를 통과 (계단 직후 처짐 ≤ 151, 0.45 s 뒤 155 ± 2)',
+                   early and late and min(early) <= 151 and all(abs(u - 155) <= 2 for u in late),
+                   f'직후 {early}, 나중 {sorted(set(late))}')
+        self.req('NOTCH 0', ('PIDCFG', 'ERR'))
+        self.stop()
+        out = self.responses('RL 2 2 10 40 210')
+        self.check('RL 5인자 → res=0 (증분 모드로 돌아감)', out and out[0].kv.get('res') == '0', out[0].raw if out else '')
+        self.req('PID 900 7000 20 140 40', ('PIDCFG', 'ERR'))
 
         self.log('== lag 타이밍 (dec 4, lag 3)')
         self.stop()

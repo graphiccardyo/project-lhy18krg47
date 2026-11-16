@@ -1,0 +1,557 @@
+{
+ "train_episodes": 150,
+ "eval_rounds": 14,
+ "decisions": 191808,
+ "fallbacks": 0,
+ "aborts": 0,
+ "misses": 0,
+ "pauses": 0,
+ "eval_episodes": 42,
+ "elapsed": 7161.840000133117,
+ "baseline": {
+  "rms_mean": 2.2633,
+  "per_scenario": [
+   1.8851,
+   2.3978,
+   2.5071
+  ],
+  "ss_mean": 0.2816,
+  "ss_per_scenario": [
+   0.4174,
+   0.3268,
+   0.1007
+  ],
+  "bias_mean": 0.0662,
+  "bias_per_scenario": [
+   0.0793,
+   0.0361,
+   0.0832
+  ],
+  "ripple_mean": 0.8423,
+  "settle_mean": 5.695,
+  "settle_per_scenario": [
+   4.52,
+   7.805,
+   4.76
+  ],
+  "os_mean": 104.04,
+  "episode": 100,
+  "time_s": 4878.7
+ },
+ "baseline_history": [
+  {
+   "rms_mean": 1.8052,
+   "per_scenario": [
+    1.5592,
+    1.974,
+    1.8824
+   ],
+   "ss_mean": 0.0388,
+   "ss_per_scenario": [
+    0.0415,
+    0.0322,
+    0.0428
+   ],
+   "bias_mean": 0.0196,
+   "bias_per_scenario": [
+    0.021,
+    0.0073,
+    0.0304
+   ],
+   "ripple_mean": 0.0417,
+   "settle_mean": 1.3783,
+   "settle_per_scenario": [
+    2.225,
+    1.0,
+    0.91
+   ],
+   "os_mean": 4.9067,
+   "episode": 0,
+   "time_s": 66.0
+  },
+  {
+   "rms_mean": 3.0515,
+   "per_scenario": [
+    2.807,
+    4.0565,
+    2.2911
+   ],
+   "ss_mean": 0.3598,
+   "ss_per_scenario": [
+    0.1464,
+    0.8781,
+    0.0548
+   ],
+   "bias_mean": 0.0935,
+   "bias_per_scenario": [
+    0.0918,
+    0.1373,
+    0.0513
+   ],
+   "ripple_mean": 0.7707,
+   "settle_mean": 6.035,
+   "settle_per_scenario": [
+    6.075,
+    9.205,
+    2.825
+   ],
+   "os_mean": 166.3533,
+   "episode": 50,
+   "time_s": 2470.6
+  },
+  {
+   "rms_mean": 2.2633,
+   "per_scenario": [
+    1.8851,
+    2.3978,
+    2.5071
+   ],
+   "ss_mean": 0.2816,
+   "ss_per_scenario": [
+    0.4174,
+    0.3268,
+    0.1007
+   ],
+   "bias_mean": 0.0662,
+   "bias_per_scenario": [
+    0.0793,
+    0.0361,
+    0.0832
+   ],
+   "ripple_mean": 0.8423,
+   "settle_mean": 5.695,
+   "settle_per_scenario": [
+    4.52,
+    7.805,
+    4.76
+   ],
+   "os_mean": 104.04,
+   "episode": 100,
+   "time_s": 4878.7
+  }
+ ],
+ "eval_scores": [
+  {
+   "episode": 10,
+   "rms_mean": 2.4752,
+   "per_scenario": [
+    1.9258,
+    2.52,
+    2.9799
+   ],
+   "ss_mean": 0.3589,
+   "ss_per_scenario": [
+    0.0667,
+    0.1024,
+    0.9076
+   ],
+   "bias_mean": 0.1224,
+   "bias_per_scenario": [
+    0.0572,
+    0.0504,
+    0.2596
+   ],
+   "ripple_mean": 0.8596,
+   "settle_mean": 5.4667,
+   "settle_per_scenario": [
+    4.18,
+    2.22,
+    10.0
+   ],
+   "os_mean": 112.34,
+   "time_s": 532.6
+  },
+  {
+   "episode": 20,
+   "rms_mean": 2.1772,
+   "per_scenario": [
+    2.3845,
+    2.107,
+    2.0402
+   ],
+   "ss_mean": 0.7692,
+   "ss_per_scenario": [
+    1.2162,
+    0.4568,
+    0.6345
+   ],
+   "bias_mean": 0.1733,
+   "bias_per_scenario": [
+    0.3348,
+    0.0532,
+    0.1318
+   ],
+   "ripple_mean": 1.3592,
+   "settle_mean": 7.4767,
+   "settle_per_scenario": [
+    9.98,
+    2.45,
+    10.0
+   ],
+   "os_mean": 51.06,
+   "time_s": 1002.3
+  },
+  {
+   "episode": 30,
+   "rms_mean": 2.6433,
+   "per_scenario": [
+    1.7038,
+    3.5006,
+    2.7256
+   ],
+   "ss_mean": 0.9949,
+   "ss_per_scenario": [
+    0.2569,
+    1.2601,
+    1.4678
+   ],
+   "bias_mean": 0.0987,
+   "bias_per_scenario": [
+    0.0463,
+    0.0785,
+    0.1714
+   ],
+   "ripple_mean": 2.0115,
+   "settle_mean": 7.6033,
+   "settle_per_scenario": [
+    8.55,
+    4.26,
+    10.0
+   ],
+   "os_mean": 116.2567,
+   "time_s": 1471.3
+  },
+  {
+   "episode": 40,
+   "rms_mean": 2.4456,
+   "per_scenario": [
+    2.091,
+    2.4464,
+    2.7993
+   ],
+   "ss_mean": 0.4575,
+   "ss_per_scenario": [
+    0.4708,
+    0.6904,
+    0.2112
+   ],
+   "bias_mean": 0.1804,
+   "bias_per_scenario": [
+    0.1419,
+    0.3361,
+    0.0631
+   ],
+   "ripple_mean": 0.7818,
+   "settle_mean": 9.8,
+   "settle_per_scenario": [
+    10.0,
+    9.4,
+    10.0
+   ],
+   "os_mean": 76.3133,
+   "time_s": 1937.8
+  },
+  {
+   "episode": 50,
+   "rms_mean": 2.8723,
+   "per_scenario": [
+    2.4974,
+    2.0583,
+    4.0612
+   ],
+   "ss_mean": 1.0157,
+   "ss_per_scenario": [
+    0.6198,
+    0.9749,
+    1.4524
+   ],
+   "bias_mean": 0.3003,
+   "bias_per_scenario": [
+    0.2514,
+    0.2936,
+    0.356
+   ],
+   "ripple_mean": 1.8935,
+   "settle_mean": 9.9367,
+   "settle_per_scenario": [
+    10.0,
+    9.81,
+    10.0
+   ],
+   "os_mean": 155.57,
+   "time_s": 2404.6
+  },
+  {
+   "episode": 60,
+   "rms_mean": 2.4724,
+   "per_scenario": [
+    3.3488,
+    1.8072,
+    2.2613
+   ],
+   "ss_mean": 0.1763,
+   "ss_per_scenario": [
+    0.0677,
+    0.0412,
+    0.4201
+   ],
+   "bias_mean": 0.06,
+   "bias_per_scenario": [
+    0.0619,
+    0.0352,
+    0.0829
+   ],
+   "ripple_mean": 0.3064,
+   "settle_mean": 4.82,
+   "settle_per_scenario": [
+    1.46,
+    3.09,
+    9.91
+   ],
+   "os_mean": 49.3667,
+   "time_s": 2936.9
+  },
+  {
+   "episode": 70,
+   "rms_mean": 2.465,
+   "per_scenario": [
+    2.3864,
+    2.4353,
+    2.5734
+   ],
+   "ss_mean": 0.3487,
+   "ss_per_scenario": [
+    0.2888,
+    0.3619,
+    0.3953
+   ],
+   "bias_mean": 0.1336,
+   "bias_per_scenario": [
+    0.1215,
+    0.2261,
+    0.0532
+   ],
+   "ripple_mean": 0.5105,
+   "settle_mean": 7.9833,
+   "settle_per_scenario": [
+    10.0,
+    3.95,
+    10.0
+   ],
+   "os_mean": 33.4867,
+   "time_s": 3403.1
+  },
+  {
+   "episode": 80,
+   "rms_mean": 2.0852,
+   "per_scenario": [
+    2.0964,
+    1.8457,
+    2.3135
+   ],
+   "ss_mean": 0.4261,
+   "ss_per_scenario": [
+    0.2209,
+    0.2546,
+    0.8027
+   ],
+   "bias_mean": 0.197,
+   "bias_per_scenario": [
+    0.1687,
+    0.2202,
+    0.2022
+   ],
+   "ripple_mean": 0.9189,
+   "settle_mean": 7.3233,
+   "settle_per_scenario": [
+    10.0,
+    1.97,
+    10.0
+   ],
+   "os_mean": 79.7933,
+   "time_s": 3874.5
+  },
+  {
+   "episode": 90,
+   "rms_mean": 2.28,
+   "per_scenario": [
+    2.0905,
+    2.3849,
+    2.3646
+   ],
+   "ss_mean": 0.8325,
+   "ss_per_scenario": [
+    0.08,
+    1.4926,
+    0.925
+   ],
+   "bias_mean": 0.1381,
+   "bias_per_scenario": [
+    0.0626,
+    0.1145,
+    0.2372
+   ],
+   "ripple_mean": 1.7433,
+   "settle_mean": 7.87,
+   "settle_per_scenario": [
+    3.66,
+    9.95,
+    10.0
+   ],
+   "os_mean": 85.4267,
+   "time_s": 4342.9
+  },
+  {
+   "episode": 100,
+   "rms_mean": 2.3584,
+   "per_scenario": [
+    1.9858,
+    2.5894,
+    2.5
+   ],
+   "ss_mean": 0.2033,
+   "ss_per_scenario": [
+    0.2673,
+    0.214,
+    0.1287
+   ],
+   "bias_mean": 0.1152,
+   "bias_per_scenario": [
+    0.1295,
+    0.0876,
+    0.1285
+   ],
+   "ripple_mean": 0.2723,
+   "settle_mean": 5.3533,
+   "settle_per_scenario": [
+    10.0,
+    0.86,
+    5.2
+   ],
+   "os_mean": 85.57,
+   "time_s": 4812.6
+  },
+  {
+   "episode": 110,
+   "rms_mean": 2.2423,
+   "per_scenario": [
+    2.1118,
+    2.5789,
+    2.0362
+   ],
+   "ss_mean": 0.4344,
+   "ss_per_scenario": [
+    0.4413,
+    0.7287,
+    0.1333
+   ],
+   "bias_mean": 0.1196,
+   "bias_per_scenario": [
+    0.1716,
+    0.1097,
+    0.0775
+   ],
+   "ripple_mean": 0.7644,
+   "settle_mean": 7.2867,
+   "settle_per_scenario": [
+    8.81,
+    3.05,
+    10.0
+   ],
+   "os_mean": 49.82,
+   "time_s": 5350.5
+  },
+  {
+   "episode": 120,
+   "rms_mean": 1.939,
+   "per_scenario": [
+    1.6072,
+    1.8173,
+    2.3925
+   ],
+   "ss_mean": 0.4592,
+   "ss_per_scenario": [
+    0.5222,
+    0.4004,
+    0.455
+   ],
+   "bias_mean": 0.1813,
+   "bias_per_scenario": [
+    0.1,
+    0.1744,
+    0.2694
+   ],
+   "ripple_mean": 0.6843,
+   "settle_mean": 6.91,
+   "settle_per_scenario": [
+    10.0,
+    0.73,
+    10.0
+   ],
+   "os_mean": 87.42,
+   "time_s": 5819.0
+  },
+  {
+   "episode": 130,
+   "rms_mean": 2.0507,
+   "per_scenario": [
+    1.5458,
+    2.5411,
+    2.0652
+   ],
+   "ss_mean": 0.1601,
+   "ss_per_scenario": [
+    0.0549,
+    0.3685,
+    0.0569
+   ],
+   "bias_mean": 0.0288,
+   "bias_per_scenario": [
+    0.0139,
+    0.0351,
+    0.0374
+   ],
+   "ripple_mean": 0.2158,
+   "settle_mean": 1.78,
+   "settle_per_scenario": [
+    0.88,
+    2.79,
+    1.67
+   ],
+   "os_mean": 19.4533,
+   "time_s": 6288.9
+  },
+  {
+   "episode": 140,
+   "rms_mean": 2.7192,
+   "per_scenario": [
+    2.3105,
+    2.8593,
+    2.9878
+   ],
+   "ss_mean": 0.9404,
+   "ss_per_scenario": [
+    0.726,
+    0.5016,
+    1.5937
+   ],
+   "bias_mean": 0.134,
+   "bias_per_scenario": [
+    0.1755,
+    0.1401,
+    0.0865
+   ],
+   "ripple_mean": 1.6133,
+   "settle_mean": 8.49,
+   "settle_per_scenario": [
+    10.0,
+    5.78,
+    9.69
+   ],
+   "os_mean": 167.16,
+   "time_s": 6758.8
+  }
+ ],
+ "ep_index": 201,
+ "manual_evals": 0
+}

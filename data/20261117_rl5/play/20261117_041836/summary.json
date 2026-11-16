@@ -1,0 +1,163 @@
+{
+ "policy": "C:\\Users\\avalo\\Desktop\\aeropendulum-main\\data\\20261117_rl5\\checkpoints\\manual_00081_041012",
+ "run_dir": "C:\\Users\\avalo\\Desktop\\aeropendulum-main\\data\\20261117_rl5",
+ "snapshot": {
+  "name": "manual_00081_041012",
+  "kind": "manual",
+  "episode": 81,
+  "decisions": 104895,
+  "updates": 423926,
+  "eval_rms": null,
+  "recent_eval_rms": 1.7197,
+  "time": "2026-11-17T04:10:12",
+  "elapsed_s": 5946.9,
+  "obs_dim": 8,
+  "alpha": 0.00044
+ },
+ "policy_info": {
+  "file": "C:\\Users\\avalo\\Desktop\\aeropendulum-main\\data\\20261117_rl5\\checkpoints\\manual_00081_041012\\actor.pt",
+  "updates": 423926,
+  "alpha": 0.00044047311530448496
+ },
+ "link": "COM4",
+ "fw": "AEROPEND_RL 1.2",
+ "sim": false,
+ "bench": false,
+ "scenarios": [
+  [
+   25.0,
+   25.0,
+   25.0
+  ]
+ ],
+ "repeat": 2,
+ "dur_s": 30.0,
+ "pid": true,
+ "settle_s": 3.0,
+ "time": "2026-11-17T04:20:48",
+ "end_reason": null,
+ "episodes": [
+  {
+   "run": 0,
+   "kind": "rl",
+   "scenario": 0,
+   "status": "done",
+   "home": 25.0,
+   "r1": 25.0,
+   "r2": 25.0,
+   "miss": 0,
+   "fallback": false,
+   "csv": "ep00001_play.csv",
+   "metrics": {
+    "samples": 3000,
+    "rms": 0.26289294399051505,
+    "settled_mean_abs_e": 0.10457037037037042,
+    "settled_std_e": 0.1347997856905649,
+    "settled_mean_e": -0.008466666666667217,
+    "overshoot_deg": null,
+    "overshoot_pct": null,
+    "mean_pwm": 172.74066666666667,
+    "pwm_std_settled": 0.9285677866643484,
+    "mean_abs_dpwm": 0.19473157719239748
+   }
+  },
+  {
+   "run": 0,
+   "kind": "pid",
+   "scenario": 0,
+   "status": "done",
+   "home": 25.0,
+   "r1": 25.0,
+   "r2": 25.0,
+   "miss": 0,
+   "fallback": false,
+   "csv": "ep00002_pid.csv",
+   "metrics": {
+    "samples": 3000,
+    "rms": 0.13684687306134055,
+    "settled_mean_abs_e": 0.1127777777777778,
+    "settled_std_e": 0.13993161449527322,
+    "settled_mean_e": -0.0003259259259264677,
+    "overshoot_deg": null,
+    "overshoot_pct": null,
+    "mean_pwm": 171.71266666666668,
+    "pwm_std_settled": 0.6525327882800384,
+    "mean_abs_dpwm": 0.09769923307769257
+   }
+  },
+  {
+   "run": 1,
+   "kind": "rl",
+   "scenario": 0,
+   "status": "done",
+   "home": 25.0,
+   "r1": 25.0,
+   "r2": 25.0,
+   "miss": 0,
+   "fallback": false,
+   "csv": "ep00003_play.csv",
+   "metrics": {
+    "samples": 3000,
+    "rms": 0.16818789096325182,
+    "settled_mean_abs_e": 0.09390000000000003,
+    "settled_std_e": 0.11889333526934034,
+    "settled_mean_e": -0.0012037037037042433,
+    "overshoot_deg": null,
+    "overshoot_pct": null,
+    "mean_pwm": 172.91466666666668,
+    "pwm_std_settled": 0.8249590753452639,
+    "mean_abs_dpwm": 0.15638546182060686
+   }
+  },
+  {
+   "run": 1,
+   "kind": "pid",
+   "scenario": 0,
+   "status": "done",
+   "home": 25.0,
+   "r1": 25.0,
+   "r2": 25.0,
+   "miss": 0,
+   "fallback": false,
+   "csv": "ep00004_pid.csv",
+   "metrics": {
+    "samples": 3000,
+    "rms": 0.12437537269625905,
+    "settled_mean_abs_e": 0.09721481481481486,
+    "settled_std_e": 0.12206162153315497,
+    "settled_mean_e": 0.0008592592592587265,
+    "overshoot_deg": null,
+    "overshoot_pct": null,
+    "mean_pwm": 172.96466666666666,
+    "pwm_std_settled": 0.7108497783691062,
+    "mean_abs_dpwm": 0.07769256418806268
+   }
+  }
+ ],
+ "aggregate": {
+  "pid": {
+   "episodes": 2,
+   "fallbacks": 0,
+   "miss": 0,
+   "rms": 0.1306,
+   "settled_mean_abs_e": 0.105,
+   "settled_std_e": 0.131,
+   "overshoot_deg": null,
+   "overshoot_pct": null,
+   "mean_pwm": 172.3387,
+   "pwm_std_settled": 0.6817
+  },
+  "rl": {
+   "episodes": 2,
+   "fallbacks": 0,
+   "miss": 0,
+   "rms": 0.2155,
+   "settled_mean_abs_e": 0.0992,
+   "settled_std_e": 0.1268,
+   "overshoot_deg": null,
+   "overshoot_pct": null,
+   "mean_pwm": 172.8277,
+   "pwm_std_settled": 0.8768
+  }
+ }
+}

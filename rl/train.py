@@ -3,6 +3,8 @@
     python -m rl.train --port COM4                 실제 보드 (모터가 돕니다 — 사람이 자리에서 허락한 뒤에만)
     python -m rl.train --fake                      가짜 보드, 실시간
     python -m rl.train --fake --fast               가짜 보드, 가상시간 (빠름)
+    python -m rl.train --port COM4 --config rl/configs/motor2.json --init data/<가짜 보드 사전학습 실행>
+                                                   사전학습 정책·크리틱으로 실기 시작 (버퍼 비움, 워밍업 0)
     옵션: --config cfg.json  --resume data/<날짜>_rlN  --hours 2  --episodes 500  --bench  --randomize
           --latency-ms 7 9 (가짜 보드 명령 도착 지연)  --quiet
 
@@ -54,6 +56,12 @@ def main(argv=None):
     ap.add_argument('--fast', action='store_true', help='가짜 보드 가상시간 모드')
     ap.add_argument('--config')
     ap.add_argument('--resume', help='이어 할 실행 폴더 (data/<날짜>_rlN)')
+    ap.add_argument('--init', metavar='RUN_DIR',
+                    help='사전학습 실행(가짜 보드)의 액터·크리틱·α 로 새 실행을 시작 (버퍼는 비우고 무작위 워밍업 없음)')
+    ap.add_argument('--init-alpha', type=float, metavar='A',
+                    help='--init 과 함께: 이어받은 α 대신 이 값에서 시작 (자동 조정은 그대로; 목표 엔트로피는 설정 sac.target_entropy)')
+    ap.add_argument('--init-snapshot', metavar='NAME', default='best',
+                    help='--init 실행의 액터 스냅샷 (checkpoints/NAME, 기본 best; "last" = 마지막 체크포인트의 액터)')
     ap.add_argument('--hours', type=float)
     ap.add_argument('--episodes', type=int)
     ap.add_argument('--bench', action='store_true', help='BENCH 1 (모터 핀 LOW) 로 루프만 시험')
@@ -86,11 +94,35 @@ def main(argv=None):
         cfg.plant.randomize = True
     if args.shock is not None:
         cfg.plant.shock_rate = args.shock
+    if args.init and args.resume:
+        ap.error('--init 은 새 실행에만 (--resume 과 함께 쓸 수 없음)')
+    if args.init_alpha is not None and (not args.init or args.init_alpha <= 0):
+        ap.error('--init-alpha 는 --init 과 함께, 0 보다 큰 값')
+    actor_path = None
+    if args.init:
+        if args.init_snapshot != 'last':
+            actor_path = os.path.join(args.init, 'checkpoints', args.init_snapshot)
+            if not os.path.isdir(actor_path):
+                ap.error(f'스냅샷이 없습니다: {actor_path}')
+        cfg.sac.warmup_steps = 0          # 사전학습 정책으로 바로 시작 (무작위 행동 없음)
 
     factory, sim = make_link_factory(args, cfg)
     from .trainer import Trainer
     log = (lambda s: None) if args.quiet else (lambda s: print(s, flush=True))
     tr = Trainer(cfg, factory, run_dir, resume=bool(args.resume), autostart=True, log=log, sim=sim)
+    if args.init:
+        info = tr.sac.init_from(os.path.join(args.init, 'checkpoint'), actor_path)
+        if args.init_alpha:
+            import math
+            import torch
+            with torch.no_grad():
+                tr.sac.log_alpha.copy_(torch.tensor(math.log(args.init_alpha)))
+            info['alpha_src'], info['alpha'] = info['alpha'], args.init_alpha
+        info.update(src=os.path.abspath(args.init), snapshot=args.init_snapshot,
+                    time=time.strftime('%Y-%m-%dT%H:%M:%S'))
+        with open(os.path.join(run_dir, 'init.json'), 'w', encoding='utf-8') as f:
+            json.dump(info, f, ensure_ascii=False, indent=1)
+        tr.rec.event(f'사전학습 이어받기: {args.init} (액터 {args.init_snapshot}, α {info["alpha"]:.4f}), 버퍼 비움, 워밍업 0')
     print(f'실행 폴더: {run_dir}', flush=True)
     tr.start()
     httpd = None

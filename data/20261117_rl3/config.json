@@ -1,0 +1,320 @@
+{
+  "plant": {
+    "static_map": [
+      [
+        0,
+        0.0
+      ],
+      [
+        30,
+        0.0
+      ],
+      [
+        40,
+        2.7
+      ],
+      [
+        50,
+        3.1
+      ],
+      [
+        60,
+        3.8
+      ],
+      [
+        70,
+        4.8
+      ],
+      [
+        80,
+        7.0
+      ],
+      [
+        90,
+        9.0
+      ],
+      [
+        100,
+        10.8
+      ],
+      [
+        110,
+        13.0
+      ],
+      [
+        120,
+        15.5
+      ],
+      [
+        130,
+        17.7
+      ],
+      [
+        140,
+        19.7
+      ],
+      [
+        150,
+        21.7
+      ],
+      [
+        160,
+        23.7
+      ],
+      [
+        170,
+        25.8
+      ],
+      [
+        180,
+        27.7
+      ],
+      [
+        190,
+        31.3
+      ],
+      [
+        200,
+        34.5
+      ],
+      [
+        210,
+        36.1
+      ],
+      [
+        220,
+        38.5
+      ],
+      [
+        230,
+        40.6
+      ],
+      [
+        240,
+        42.7
+      ],
+      [
+        250,
+        44.9
+      ],
+      [
+        255,
+        46.0
+      ]
+    ],
+    "K": 0.192,
+    "Ks": 0.06,
+    "K_nom": 0.192,
+    "Ks_nom": 0.06,
+    "T": 0.357,
+    "Tc": 5.0,
+    "delay_ms": 23.0,
+    "fr_hz": 2.57,
+    "zr": 0.15,
+    "offset_deg": 0.0,
+    "rest_offset_deg": 3.0,
+    "friction_deg": 1.0,
+    "noise_deg": 0.04,
+    "omega_noise": 0.5,
+    "vib_amp": 10.0,
+    "vib_hz": 49.5,
+    "acc_noise_deg": 4.0,
+    "stall_pwm": 30.0,
+    "start_pwm": 45.0,
+    "start_delay": 0.15,
+    "shock_rate": 0.0,
+    "shock_w": [
+      100.0,
+      300.0
+    ],
+    "randomize": false,
+    "dr": {
+      "K": [
+        0.15,
+        0.27,
+        "log"
+      ],
+      "Ks": [
+        0.03,
+        0.1
+      ],
+      "Tc": [
+        3.0,
+        8.0
+      ],
+      "T": [
+        0.3,
+        0.42
+      ],
+      "delay_ms": [
+        16.0,
+        30.0
+      ],
+      "fr_hz": [
+        2.3,
+        2.75
+      ],
+      "zr": [
+        0.09,
+        0.2
+      ],
+      "offset_deg": [
+        -3.0,
+        3.0
+      ],
+      "shock_rate": [
+        0.0,
+        0.2
+      ],
+      "noise_deg": [
+        0.02,
+        0.08
+      ]
+    },
+    "seed": 1
+  },
+  "pid": {
+    "kp": 4.3,
+    "ki": 13.3,
+    "kd": 0.0,
+    "ff": 140,
+    "umin": 40,
+    "notch_cHz": 235,
+    "notch_zz": 150,
+    "notch_zp": 700
+  },
+  "lim": {
+    "pwm_max": 230,
+    "angle_cdeg": 10000,
+    "rev": 0
+  },
+  "rl": {
+    "dec": 2,
+    "lag": 2,
+    "du_max": 10,
+    "u_lo": 40,
+    "u_hi": 230,
+    "res_max": 15
+  },
+  "safe": {
+    "th_lo_cdeg": -1000,
+    "th_hi_cdeg": 7000,
+    "w_max_cdps": 60000
+  },
+  "episode": {
+    "dur_s": 20.0,
+    "ref_lo": 15.0,
+    "ref_hi": 30.0,
+    "home_deg": null,
+    "step_frac": [
+      0.35,
+      0.65
+    ],
+    "min_step_deg": 4.0,
+    "settle_tol_deg": 2.0,
+    "settle_hold_s": 1.0,
+    "settle_timeout_s": 15.0,
+    "home_min_s": 2.0
+  },
+  "env": {
+    "th_center": 25.0,
+    "th_scale": 10.0,
+    "w_scale": 100.0,
+    "w_lpf_hz": 10.0,
+    "u_center": 125.0,
+    "u_scale": 85.0,
+    "err_scale": 2.0,
+    "err_cap": 16.0,
+    "w_abs": 1.0,
+    "w_du": 0.05,
+    "w_ddu": 0.0,
+    "w_fine": 0.0,
+    "fine_scale": 0.5,
+    "w_omega": 0.0,
+    "omega_scale": 20.0,
+    "omega_gate": 2.0,
+    "omega_cap": 4.0,
+    "fallback_penalty": 30.0,
+    "abort_penalty": 60.0,
+    "reward_scale": 0.03,
+    "sigma_delta": true,
+    "obs_eint": true,
+    "eint_tau_s": 3.0,
+    "eint_scale": 2.0,
+    "act_pow": 2.0,
+    "obs_efine": true,
+    "efine_scale": 0.5,
+    "ki_assist": 0.0,
+    "ki_band_deg": 0.0
+  },
+  "rest": {
+    "max_on_s": 120.0,
+    "rest_s": 90.0
+  },
+  "sac": {
+    "hidden": 16,
+    "batch": 256,
+    "lr": 0.0003,
+    "gamma": 0.99,
+    "tau": 0.005,
+    "buffer_size": 500000,
+    "warmup_steps": 0,
+    "utd": 1.0,
+    "utd_rest": 3.0,
+    "caps_t": 0.3,
+    "caps_s": 0.3,
+    "caps_eps": 0.02,
+    "init_alpha": 0.2,
+    "target_entropy": -1.0,
+    "log_std_min": -6.0,
+    "log_std_max": 1.0,
+    "seed": 0
+  },
+  "monitor": {
+    "max_overrun_delta": 5,
+    "sat_max_per_s": 50,
+    "sat_consec": 3,
+    "max_miss_frac": 0.2,
+    "link_timeout_s": 2.0,
+    "rest_check_deg": 5.0,
+    "hb_watchdog_s": 20.0,
+    "att_gap_max_deg": 5.0,
+    "att_gap_warn_deg": 3.0,
+    "att_gap_win_s": 10.0
+  },
+  "stop": {
+    "max_hours": 3.0,
+    "max_episodes": 3000,
+    "max_fallbacks": 150
+  },
+  "run": {
+    "eval_every": 10,
+    "eval_refs": [
+      [
+        20.0,
+        30.0,
+        22.0
+      ],
+      [
+        30.0,
+        18.0,
+        28.0
+      ],
+      [
+        25.0,
+        30.0,
+        16.0
+      ]
+    ],
+    "ss_win_s": 3.0,
+    "settle_band_deg": 0.5,
+    "baseline_every": 5,
+    "checkpoint_every": 10,
+    "snapshot_every": 50,
+    "baseline_at_start": true,
+    "save_episode_csv": true,
+    "keep_episode_series": 3,
+    "bench": false
+  },
+  "ts_s": 0.01
+}

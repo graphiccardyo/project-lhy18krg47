@@ -263,6 +263,11 @@ def main(d, angle='auto'):
             c[0], c[1], 2 * c[2] * c[1], c[1] ** 2, c[0], c[1], c[2],
             '  '.join('%s=%5.1f%%' % (k, fitpct(dyn[k]['y'], sim2(c, dyn[k]['u'], 0))) for k in keys)))
 
+    if not keys:   # 동적 시험(STEP·CHIRP)이 없는 run (STAIR·RELAY 만): 맞춤 그림 없이 요약만 저장
+        with open(os.path.join(od, 'summary.txt'), 'w', encoding='utf-8') as f:
+            f.write('\n'.join(L) + '\n')
+        print('\n결과: ' + od)
+        return
     fig, axs = plt.subplots(len(keys), 1, figsize=(12, 3.4 * len(keys)), squeeze=False)
     pj, ndj = fitted['+'.join(keys)] if len(keys) > 1 else fitted[keys[0]]
     for a, k in zip(axs[:, 0], keys):

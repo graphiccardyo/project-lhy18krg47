@@ -290,6 +290,7 @@ class Trainer(threading.Thread):
         self.snapshots = []
         self.best_rms = None
         self._last_eval = None         # (평가한 정책의 갱신 수, RMS)
+        self._rest_updates = 0.0       # 휴식 때 할 추가 경사 갱신 (sac.utd_rest · 새 결정 수, 누적)
         if resume:
             self._load_checkpoint()
         self._scan_snapshots()
@@ -543,9 +544,22 @@ class Trainer(threading.Thread):
             lambda kv: kv.get('ff') == str(p.ff) and kv.get('umin') == str(p.umin))
         req(f'NOTCH {p.notch_cHz} {p.notch_zz} {p.notch_zp}' if p.notch_cHz else 'NOTCH 0', 'PIDCFG')
         r = c.rl
-        req(f'RL {r.dec} {r.lag} {r.du_max} {r.u_lo} {r.u_hi}', 'RLCFG',
-            lambda kv: (kv.get('dec'), kv.get('lag'), kv.get('dumax'), kv.get('ulo'), kv.get('uhi'))
-            == tuple(map(str, (r.dec, r.lag, r.du_max, r.u_lo, r.u_hi))))
+        res = getattr(r, 'res_max', 0)
+        if res:   # 잔차 모드: AEROPEND_RL 1.2 이상 (1.1 은 잔차가 노치를 거치지 않음, 1.0 은 6번째 인자 거부)
+            fw = str(getattr(self.link, 'fw', '') or '')
+            try:
+                ver = tuple(int(x) for x in fw.split()[-1].split('.'))
+            except (ValueError, IndexError):
+                ver = (0,)
+            if ver < (1, 2):
+                raise RuntimeError(f'잔차 모드에는 AEROPEND_RL 1.2 이상이 필요합니다 (보드: "{fw}") — scripts/Build-Rl.ps1 -Upload')
+            req(f'RL {r.dec} {r.lag} {r.du_max} {r.u_lo} {r.u_hi} {res}', 'RLCFG',
+                lambda kv: (kv.get('dec'), kv.get('lag'), kv.get('dumax'), kv.get('ulo'), kv.get('uhi'), kv.get('res'))
+                == tuple(map(str, (r.dec, r.lag, r.du_max, r.u_lo, r.u_hi, res))))
+        else:
+            req(f'RL {r.dec} {r.lag} {r.du_max} {r.u_lo} {r.u_hi}', 'RLCFG',
+                lambda kv: (kv.get('dec'), kv.get('lag'), kv.get('dumax'), kv.get('ulo'), kv.get('uhi'))
+                == tuple(map(str, (r.dec, r.lag, r.du_max, r.u_lo, r.u_hi))) and kv.get('res', '0') == '0')
         s = c.safe
         req(f'SAFE {s.th_lo_cdeg} {s.th_hi_cdeg} {s.w_max_cdps}', 'RLCFG',
             lambda kv: (kv.get('thlo'), kv.get('thhi'), kv.get('wmax'))
@@ -561,7 +575,8 @@ class Trainer(threading.Thread):
         self.link.drain(self._monitor)
         self._prev_overruns = None
         self._sat_run = 0
-        self._event(f'설정 완료: RL {r.dec}/{r.lag}/{r.du_max}/{r.u_lo}-{r.u_hi}, SAFE {s.th_lo_cdeg}..{s.th_hi_cdeg}, '
+        self._event(f'설정 완료: RL {r.dec}/{r.lag}/{r.du_max}/{r.u_lo}-{r.u_hi}'
+                    f'{f" 잔차 ±{res}" if res else ""}, SAFE {s.th_lo_cdeg}..{s.th_hi_cdeg}, '
                     f'PID {p.kp}/{p.ki}/{p.kd} ff {p.ff}, LIM {c.lim.pwm_max}/{c.lim.angle_cdeg}')
 
     # ================================================================== 에피소드 구성 요소
@@ -794,6 +809,7 @@ class Trainer(threading.Thread):
         self._set('baseline')
         per, sss = [], []
         for i, (home, r1, r2) in enumerate(self.cfg.run.eval_refs):
+            self._maybe_rest()      # 기준선·평가 묶음 중에도 가동 한계를 지킴 (11-17: 묶음 때문에 205 s 연속 가동)
             self._home(home)
             s = self._pid_episode(home, r1, r2, 0.5, scenario=str(i))
             per.append(round(s['rms'], 4))
@@ -811,6 +827,7 @@ class Trainer(threading.Thread):
         self._set('eval')
         per, sss = [], []
         for i, (home, r1, r2) in enumerate(self.cfg.run.eval_refs):
+            self._maybe_rest()
             self._home(home)
             s, status, _ = self._rl_episode('eval', home, r1, r2, 0.5, 'deterministic', scenario=str(i))
             self.eval_episodes += 1
@@ -937,10 +954,14 @@ class Trainer(threading.Thread):
         c = self.cfg.sac
         if self.decisions < c.warmup_steps or self.sac.buffer.n < c.batch:
             return
+        self._rest_updates += getattr(c, 'utd_rest', 0.0) * n_new    # 휴식 때 몰아서 (_maybe_rest)
         n = int(round(c.utd * n_new))
         if n <= 0:
             return
-        self._set('updating', f'경사 갱신 {n}회')
+        self._run_updates(n, f'경사 갱신 {n}회')
+
+    def _run_updates(self, n: int, detail: str):
+        self._set('updating', detail)
         done = 0
         while done < n:
             k = min(50, n - done)
@@ -959,6 +980,13 @@ class Trainer(threading.Thread):
         self._request('STOP', 'EVT')
         self._event(f'휴식 시작 (모터 가동 {self.motor_on_s:.0f} s)')
         t_end = self.link.now() + r.rest_s
+        n_extra = int(self._rest_updates)
+        if n_extra > 0:          # 모터가 멈춘 동안 추가 경사 갱신 (sac.utd_rest)
+            t0 = time.time()
+            self._run_updates(n_extra, f'휴식 중 추가 경사 갱신 {n_extra}회')
+            self._rest_updates -= n_extra
+            self._event(f'휴식 중 추가 갱신 {n_extra}회 ({time.time() - t0:.0f} s)')
+            self._set('resting', f'휴식 {r.rest_s:.0f} s')
         last = deque(maxlen=max(1, int(1.0 / self.ts)))
         while True:
             left = t_end - self.link.now()
