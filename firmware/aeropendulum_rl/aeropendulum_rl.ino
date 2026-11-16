@@ -26,7 +26,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define FW_ID "AEROPEND_RL 1.0"    // RL 펌웨어. 실험용은 AEROPEND_LAB
+#define FW_ID "AEROPEND_RL 1.2"    // RL 펌웨어. 실험용은 AEROPEND_LAB. 1.1 = 잔차 모드 (RL 6번째 인자 res_max), 1.2 = 잔차가 노치를 통과
 #define USE_WATCHDOG 1
 
 // ---------------------------------------------------------------- hardware
@@ -235,8 +235,10 @@ struct Profile {
 // ---------------------------------------------------------------- RL (docs/RL_PROTOCOL.md)
 // 결정 샘플: n % dec == 0 (D 전송 → PC 가 "A du" 응답). 적용 시점: 결정 샘플 + lag (n ≥ lag).
 // 적용 시점에 그 결정 구간의 A 가 있으면 u ← clamp(u + du, [ulo, min(uhi, umax)]), 없으면 u 유지 + miss.
+// 잔차 모드 (res > 0): 매 샘플 u = ff + 노치(PID 항 + r) (r 도 노치를 통과 — 1.2, 포화·적분 와인드업 방지는 전체로),
+// 적용 시점에 A 가 있으면 r ← clamp(A, ±res) (증분이 아니라 절댓값), 없으면 r 유지 + miss.
 struct RlCfg {
-  uint8_t dec = 2, lag = 1, dumax = 10, ulo = 0, uhi = 255;
+  uint8_t dec = 2, lag = 1, dumax = 10, ulo = 0, uhi = 255, res = 0;
   int16_t thlo = -2000, thhi = 6000;   // SAFE [cdeg]
   long wmax = 40000;                   // SAFE [cdeg/s]
 } rl;
@@ -259,6 +261,7 @@ struct Pid {
   float b0 = 1, b1 = 0, b2 = 0, a1 = 0, a2 = 0;
 } pid;
 float pidI = 0, omF = 0, nz1 = 0, nz2 = 0, refDeg = 0;
+int16_t pidAdd = 0;               // 잔차 모드 RL 의 r [PWM] (그 밖에는 0)
 bool clHold = false;              // REF 명령으로 기준 유지 중
 
 void notchCoeffs() {               // 쌍선형 변환 + 중심주파수 프리워핑
@@ -281,7 +284,7 @@ int16_t pidStep(float r) {
   float ts = TICK_S * streamDiv;
   float e = r - theta;
   omF += ts / (0.0159f + ts) * (omega - omF);
-  float v = pid.kp * e + pidI - pid.kd * omF;
+  float v = pid.kp * e + pidI - pid.kd * omF + pidAdd;   // 잔차도 노치를 통과 (1.2: 공진 대역 차단)
   if (pid.nfc) {                   // 2차 IIR (전치 직접형 II)
     float y = pid.b0 * v + nz1;
     nz1 = pid.b1 * v - pid.a1 * y + nz2;
@@ -337,6 +340,7 @@ void stopAll() {
   prof.type = P_NONE;
   clHold = false;
   pidI = 0;
+  pidAdd = 0;
   uManual = 0;
   phase = 0;
   applyMotor(0);
@@ -479,6 +483,7 @@ int16_t profileStep() {            // P_CLSTEP: u0/u1 = 기준 [cdeg]
 // 에피소드 종료(DONE/FALLBACK) → PID 로 home 유지 (상태 4). 적분항 I = u − ff (u = 직전 샘플에 적용된 PWM)
 int16_t rlToPid() {
   int16_t u0 = uOut;
+  pidAdd = 0;
   prof.type = P_NONE;
   phase = 0;
   pidReset();
@@ -496,10 +501,14 @@ int16_t rlStep() {
   if (n >= prof.total) { event(F("DONE")); return rlToPid(); }
   if (n != 0 && rlPh == rl.lag % rl.dec) {   // 적용 시점 (lag == dec 이면 다음 결정 샘플과 같은 샘플)
     if (rlHave) {
-      int16_t u = rlU + rlDu, hi = min((int16_t)rl.uhi, uMaxPwm);
-      if (u < rl.ulo) u = rl.ulo;
-      if (u > hi) u = hi;
-      rlU = u;
+      if (rl.res) {
+        pidAdd = rlDu;                     // 잔차 (A 에서 이미 ±res 로 자름)
+      } else {
+        int16_t u = rlU + rlDu, hi = min((int16_t)rl.uhi, uMaxPwm);
+        if (u < rl.ulo) u = rl.ulo;
+        if (u > hi) u = hi;
+        rlU = u;
+      }
       rlHave = false;
     } else {
       rlMiss++;
@@ -514,6 +523,12 @@ int16_t rlStep() {
   if (++rlPh >= rl.dec) rlPh = 0;
   prof.n++;
   phase = 1;
+  if (rl.res) {                              // u = PID(ref) + r, [ulo, min(uhi, umax)]
+    int16_t u = pidStep(refDeg), hi = min((int16_t)rl.uhi, uMaxPwm);
+    if (u < rl.ulo) u = rl.ulo;
+    if (u > hi) u = hi;
+    return u;
+  }
   return rlU;
 }
 
@@ -575,16 +590,22 @@ void sendStatus() {
   satCount = 0; tickCount = 0; gatedCount = 0;
 }
 
-void sampleStep() {
-  float g[3];
-  ahrs.gravity(g);
-  theta = pivotAngle(g);
-  omega = cfg.sign * gyr[cfg.axis];
+// 가속도계 각 (진단·감시용). 샘플 틱의 계산 시간을 줄이려고 streamDiv ≥ 2 이면 샘플이 아닌 틱에서 계산
+// (D 줄의 θacc 는 한 틱(5 ms) 전 가속도). 1.2: 잔차 모드는 샘플마다 PID 를 계산해서 샘플 틱이 5 ms 를 넘었음.
+void updThetaAcc() {
   float an = sqrt(acc[0] * acc[0] + acc[1] * acc[1] + acc[2] * acc[2]);
   if (an > 0.1f) {
     float ga[3] = {acc[0] / an, acc[1] / an, acc[2] / an};
     thetaAcc = pivotAngle(ga);
   }
+}
+
+void sampleStep() {
+  float g[3];
+  ahrs.gravity(g);
+  theta = pivotAngle(g);
+  omega = cfg.sign * gyr[cfg.axis];
+  if (streamDiv == 1) updThetaAcc();
 
   int16_t u;
   if (prof.type == P_RL) {
@@ -700,7 +721,7 @@ void tick(float dt) {
   }
   if (cal.active) calAccumulate();
   if (++divCount >= streamDiv) { divCount = 0; sampleStep(); if (streamDiv == 1) flushAux(); }
-  else flushAux();
+  else { updThetaAcc(); flushAux(); }
 }
 
 // ---------------------------------------------------------------- commands
@@ -759,6 +780,7 @@ void printRl() {
   Serial.print(F(" dumax=")); Serial.print(rl.dumax);
   Serial.print(F(" ulo=")); Serial.print(rl.ulo);
   Serial.print(F(" uhi=")); Serial.print(rl.uhi);
+  Serial.print(F(" res=")); Serial.print(rl.res);
   Serial.print(F(" thlo=")); Serial.print(rl.thlo);
   Serial.print(F(" thhi=")); Serial.print(rl.thhi);
   Serial.print(F(" wmax=")); Serial.println(rl.wmax);
@@ -830,6 +852,11 @@ void runCommand(char *args) {
     refDeg = v[0] * 0.01f;
     clHold = false;
     pidReset();
+    pidAdd = 0;
+    if (rl.res) {                            // 잔차 모드: PID 를 지금 출력에서 이어 감 (적분 = u − ff)
+      float i = uOut - pid.ff;
+      pidI = i > 255 ? 255 : (i < -255 ? -255 : i);
+    }
     startProfile(F("RL"));
     return;
   }
@@ -848,23 +875,27 @@ void runCommand(char *args) {
 
 void command(char *line) {
   lastHeartbeat = millis();
-  long v[5];
+  long v[6];
   bool ep = prof.type == P_RL;     // RL 에피소드 중
   if (strcmp(line, "PING") == 0) {
     return;
-  } else if (strncmp(line, "A ", 2) == 0) {        // A du : 다음 적용 시점의 PWM 증분 (±dumax 로 자름)
+  } else if (strncmp(line, "A ", 2) == 0) {        // A du : 다음 적용 시점의 PWM 증분 (±dumax) / 잔차 모드면 잔차 (±res)
     if (parseInts(line + 2, v, 1) != 1) { err(F("BAD_ARGS")); return; }
     if (!ep) { err(F("NOT_RL")); return; }
-    long d = v[0];
-    if (d > rl.dumax) d = rl.dumax;
-    if (d < -(long)rl.dumax) d = -(long)rl.dumax;
+    long d = v[0], m = rl.res ? rl.res : rl.dumax;
+    if (d > m) d = m;
+    if (d < -m) d = -m;
     rlDu = d;
     rlHave = true;
-  } else if (strncmp(line, "RL ", 3) == 0) {       // RL dec lag du_max u_lo u_hi
+  } else if (strncmp(line, "RL ", 3) == 0) {       // RL dec lag du_max u_lo u_hi [res_max]
     if (ep) { err(F("BUSY")); return; }
-    if (parseInts(line + 3, v, 5) != 5 || v[0] < 1 || v[0] > 20 || v[1] < 1 || v[1] > v[0] ||
-        v[2] < 1 || v[2] > 255 || v[3] < 0 || v[3] >= v[4] || v[4] > 255) { err(F("BAD_ARGS")); return; }
-    rl.dec = v[0]; rl.lag = v[1]; rl.dumax = v[2]; rl.ulo = v[3]; rl.uhi = v[4];
+    uint8_t k = parseInts(line + 3, v, 6);
+    if (k == 5) v[5] = 0;
+    if ((k != 5 && k != 6) || v[0] < 1 || v[0] > 20 || v[1] < 1 || v[1] > v[0] ||
+        v[2] < 1 || v[2] > 255 || v[3] < 0 || v[3] >= v[4] || v[4] > 255 || v[5] < 0 || v[5] > 100) {
+      err(F("BAD_ARGS")); return;
+    }
+    rl.dec = v[0]; rl.lag = v[1]; rl.dumax = v[2]; rl.ulo = v[3]; rl.uhi = v[4]; rl.res = v[5];
     printRl();
   } else if (strncmp(line, "SAFE ", 5) == 0) {     // SAFE th_lo_cdeg th_hi_cdeg w_max_cdps
     if (ep) { err(F("BUSY")); return; }
@@ -908,7 +939,7 @@ void command(char *line) {
     notchCoeffs();
     printPid();
   } else if (strncmp(line, "REF ", 4) == 0) {      // REF r_cdeg : 폐루프로 기준 유지 (STOP 으로 해제)
-    if (!ep && busy()) { err(F("BUSY")); return; }  // 에피소드 중에는 기록용 기준만 바꿈 (제어에 영향 없음)
+    if (!ep && busy()) { err(F("BUSY")); return; }  // 에피소드 중: 증분 모드면 기록용 기준만, 잔차 모드면 PID 기준
     if (!imuOk && !bench) { err(F("IMU_NOT_READY")); return; }
     if (parseInts(line + 4, v, 1) != 1 || labs(v[0]) > 17000) { err(F("BAD_ARGS")); return; }
     if (!ep && !clHold) { pidReset(); uManual = 0; clHold = true; }

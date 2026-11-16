@@ -292,6 +292,7 @@ def t_trainer(tmp, quick):
     t_snapshots(tmp)
     t_play(tmp)
     t_fork(tmp)
+    t_motor2(tmp)
     t_steady(tmp)
 
     if quick:
@@ -458,6 +459,92 @@ def t_fork(tmp):
     except SystemExit:
         bad = True
     check('fork 관측 정의가 바뀌면 거부', bad)
+
+
+def t_motor2(tmp):
+    print('== 6c. 11-16 추가: motor2 설정·CAPS·휴식 중 갱신·--init', flush=True)
+    import json
+    import torch
+    from .config import SacCfg, load_config
+    from .sac import SAC
+    here = os.path.dirname(os.path.abspath(__file__))
+    c = load_config(os.path.join(here, 'configs', 'motor2.json'))
+    check('motor2.json: _comment 무시, PWM 230 (LIM = u_hi), 가동/휴식 120/90, 16-16, PI + 노치 2.35 Hz',
+          c.lim.pwm_max == 230 and c.rl.u_hi == 230 and c.rest.max_on_s == 120 and c.rest.rest_s == 90
+          and c.sac.hidden == 16 and c.pid.kp == 4.3 and c.pid.kd == 0 and c.pid.notch_cHz == 235
+          and abs(c.plant.fr_hz - 2.57) < 1e-9 and c.plant.static_map[12] == [140, 19.7],
+          f'{c.lim.pwm_max}/{c.rl.u_hi}, {c.rest.max_on_s}/{c.rest.rest_s}, h {c.sac.hidden}')
+    # CAPS: 켜면 손실 항이 생기고, 끄면(기본) 표준 SAC 와 같은 계산
+    rng = np.random.default_rng(0)
+    res = {}
+    for caps in (0.0, 0.5):
+        sac = SAC(8, 1, SacCfg(hidden=16, batch=64, seed=3, caps_t=caps, caps_s=caps))
+        for _ in range(300):
+            o = rng.normal(size=8).astype(np.float32)
+            sac.buffer.add(o, rng.uniform(-1, 1, 1), -abs(o[0]), o + 0.01, 0.0)
+        sac.update(20)
+        res[caps] = dict(sac.last)
+    # 잔차 모드 env: r = res·sign(a)|a|^p 절댓값, 누락이면 리플레이 행동 = 실제로 유지된 잔차
+    from .config import Config
+    from .env import EpisodeEnv
+
+    class _M:
+        def __init__(self, f):
+            self.f, self.info = f, None
+    cr = Config()
+    cr.rl.res_max = 20
+    cr.env.ki_assist = 6.0                 # 잔차 모드에서는 쓰지 않아야 함
+    env = EpisodeEnv(cr)
+    acts = iter([0.5, -0.5, 1.0, 0.2])
+    env.arm(lambda o: next(acts), 2, 10)
+    sent = []
+    for n, miss in enumerate([0, 0, 0, 0, 1, 1, 1, 1]):   # 결정 n = 0, 2, 4, 6; n=4 직전 적용(n=2… 아님) 누락 흉내
+        r = env.on_D(_M([n * 10, 150, 20.0 * 100, 0, 2000, 1, 2100, miss]))
+        if r:
+            sent.append(r)
+    acts_store = [t[1] for t in env.trans]
+    check('잔차 모드 env: A = 절댓값 잔차 (0.5 → 5, −0.5 → −5, 1 → 20), 적분 보조 없음, 누락이면 직전 적용 잔차',
+          sent == ['A 5', 'A -5', 'A 20', 'A 1'] and acts_store == [0.5, 0.5, 1.0],
+          f'{sent}, 리플레이 행동 {acts_store}')
+    check('CAPS: 켜면 손실 항(유한, > 0), 기본(0)은 항 없음', 'caps' not in res[0.0] and
+          np.isfinite(res[0.5].get('caps', np.nan)) and res[0.5]['caps'] > 0, f'caps {res[0.5].get("caps")}')
+    # 휴식 중 추가 갱신
+    tr, _, rd = _virtual_trainer(tmp, 'rest_upd', 5, {'run.baseline_at_start': False, 'sac.warmup_steps': 500,
+                                                       'rest.max_on_s': 45.0, 'rest.rest_s': 30.0, 'sac.utd_rest': 2.0,
+                                                       'sac.hidden': 16})
+    tr.start()
+    tr.wait(300)
+    s = tr.status()
+    with open(os.path.join(rd, 'events.log'), encoding='utf-8') as f:
+        ev = f.read()
+    check('utd_rest: 휴식 중 추가 갱신 (이벤트), 총 갱신 > 결정 수', s['state'] == 'done' and '휴식 중 추가 갱신' in ev
+          and s['updates'] > s['decisions'], f'갱신 {s["updates"]}, 결정 {s["decisions"]}')
+    # --init: 위 실행에서 이어받아 새 실행 (버퍼 비움, 워밍업 0)
+    from .train import main as train_main
+    dd = os.path.join(tmp, 'init_runs')
+    cfgp = os.path.join(tmp, 'init_cfg.json')
+    with open(cfgp, 'w', encoding='utf-8') as f:
+        json.dump({'sac': {'hidden': 16}, 'run': {'baseline_at_start': False}}, f)
+    src = torch.load(os.path.join(rd, 'checkpoint', 'sac.pt'), weights_only=False)
+    rc = train_main(['--fake', '--fast', '--config', cfgp, '--init', rd, '--init-snapshot', 'last', '--episodes', '1',
+                     '--data-dir', dd, '--no-dashboard', '--quiet'])
+    runs = sorted(os.listdir(dd))
+    nd = os.path.join(dd, runs[-1]) if runs else ''
+    ok = False
+    detail = ''
+    if nd and os.path.exists(os.path.join(nd, 'init.json')):
+        with open(os.path.join(nd, 'config.json'), encoding='utf-8') as f:
+            ncfg = json.load(f)
+        with open(os.path.join(nd, 'checkpoint', 'trainer.json'), encoding='utf-8') as f:
+            tj = json.load(f)
+        z = np.load(os.path.join(nd, 'checkpoint', 'buffer.npz'))
+        sa = float(src['log_alpha'].exp())
+        with open(os.path.join(nd, 'init.json'), encoding='utf-8') as f:
+            ij = json.load(f)
+        ok = (rc == 0 and ncfg['sac']['warmup_steps'] == 0 and int(z['n']) == tj['decisions'] and tj['decisions'] > 0
+              and abs(ij['alpha'] - sa) < 1e-6)
+        detail = f'버퍼 {int(z["n"])} = 결정 {tj["decisions"]}, α {ij["alpha"]:.4f}'
+    check('--init: 새 실행에 init.json, 워밍업 0, 버퍼는 새 전이만, α 이어받음', ok, detail)
 
 
 def t_play(tmp):

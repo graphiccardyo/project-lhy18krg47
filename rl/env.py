@@ -34,6 +34,10 @@ lag ≤ dec 이므로 다음 결정 샘플 D 줄의 pwm 에는 a_k 가 이미 �
     (11-14 rl1: 0.5° 의 벌점이 스텝 직후 8° 의 1/60 이라 정상상태 개선 신호가 Q 오차에 묻힘).
 FALLBACK/ABORT 는 종단(done=1, 벌점), 시간 만료(DONE)는 절단(마지막 전이를 버리고 부트스트랩 유지).
 
+잔차 모드 (cfg.rl.res_max > 0, 11-16~): 보드가 매 샘플 PID(ref) 를 계산하고 정책은 거기에 더할 잔차의 절댓값
+r = res_max·sign(a)|a|^p 를 보냅니다(`_decide_residual`). 행동 0 = 순수 PID. 적분은 PID 가 하므로 적분 보조·
+시그마-델타는 쓰지 않고, 행동 벌점 w_du 는 "PID 를 덜 건드릴수록 좋음"(잔차 크기)이 됩니다.
+
 이 클래스의 on_D 는 link.fast_path 로 읽기 스레드에서 불립니다(가볍게 유지).
 """
 from __future__ import annotations
@@ -109,6 +113,9 @@ class EpisodeEnv:
         self.prev_xi = 0.0      # 직전 결정의 적분 보조 몫 (정규화, 연속값)
         self.ki_x = e.ki_assist * dec * self.cfg.ts_s / du_max   # 오차 1° 당 결정 1회 적분 증분 (정규화)
         self.ki_band = e.ki_band_deg                             # 0 = 적분 분리 없음
+        self.res = getattr(self.cfg.rl, 'res_max', 0)   # > 0 = 잔차 모드
+        self.app_a = 0.0        # 잔차 모드: 보드에 지금 적용된 잔차 (정책 공간)
+        self.prev_miss = 0
         self.prev_apol = 0.0    # 직전 결정에서 정책이 고른 행동 (정책 공간 [−1, 1])
         self.prev_du = 0        # 직전 결정에서 보낸 정수 증분
         self.prev_u = None
@@ -162,6 +169,8 @@ class EpisodeEnv:
         if n % self.dec:
             return None
         # ---- 결정 샘플
+        if self.res:
+            return self._decide_residual(msg, row, n, u, th, e_deg, miss)
         p = c.act_pow
         if self.prev_u is None:
             x_pol, a_store = 0.0, 0.0
@@ -220,6 +229,50 @@ class EpisodeEnv:
         info['du'] = du
         msg.info = info
         return f'A {du}'
+
+    def _obs(self, e_deg, th, u, a_prev):
+        c = self.cfg.env
+        dth = 0.0 if self.prev_th is None else max(-5.0, min(5.0, th - self.prev_th))
+        ov = [e_deg / c.th_scale, (th - c.th_center) / c.th_scale, self.wf / c.w_scale, dth,
+              (u - c.u_center) / c.u_scale, a_prev]
+        if c.obs_eint:
+            ov.append(self.ei / c.eint_scale)
+        if c.obs_efine:
+            ov.append(math.tanh(e_deg / c.efine_scale))
+        return np.array(ov, dtype=np.float32)
+
+    def _decide_residual(self, msg, row, n, u, th, e_deg, miss):
+        """잔차 모드 결정: 보드가 매 샘플 PID(ref) + r 을 내고, 정책은 r = res·sign(a)|a|^p 의 절댓값을 보냄.
+        직전 결정의 A 가 누락됐으면(miss 증가) 보드는 그 전 r 을 유지했으므로 리플레이 행동 = 실제로 적용된 r.
+        u(총 출력)와 적용된 잔차가 관측에 있어 PID 적분 상태는 u 에 들어 있습니다. 적분 보조·시그마-델타는 쓰지 않음."""
+        c = self.cfg.env
+        p = c.act_pow
+        if self.prev_o is not None:
+            self.app_a = self.prev_apol if miss == self.prev_miss else self.app_a
+        a_store = self.app_a
+        x_pol = math.copysign(abs(a_store) ** p, a_store)
+        o = self._obs(e_deg, th, u, a_store)
+        info = {'n': n, 'o': o}
+        if self.prev_o is not None:
+            r = self._reward(e_deg, x_pol, self.prev_a, self.wf)
+            self.trans.append((self.prev_o, a_store, r, o, 0.0))
+            self.ret += r
+            row[9] = r
+            info['r'] = r
+        a = max(-1.0, min(1.0, float(self.policy(o))))
+        rr = int(round(math.copysign(abs(a) ** p, a) * self.res))
+        row[8] = rr
+        self.du_abs += abs(rr)
+        self.decisions += 1
+        self.prev_o = o
+        self.prev_a = x_pol
+        self.prev_apol = a
+        self.prev_miss = miss
+        self.prev_u = u
+        self.prev_th = th
+        info['du'] = rr
+        msg.info = info
+        return f'A {rr}'
 
     def terminal(self, kind: str):
         """FALLBACK / ABORT: 마지막 결정에서 종단 전이 (주 스레드에서 호출)."""

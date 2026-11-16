@@ -1,0 +1,13 @@
+{
+ "name": "manual_00070_035541",
+ "kind": "manual",
+ "episode": 70,
+ "decisions": 90909,
+ "updates": 352976,
+ "eval_rms": null,
+ "recent_eval_rms": 1.722,
+ "time": "2026-11-17T03:55:41",
+ "elapsed_s": 5076.3,
+ "obs_dim": 8,
+ "alpha": 0.000474
+}

@@ -10,7 +10,7 @@
 |---|---|
 | 1. 정적 특성 시험 · 2. 스텝·스윕 시험 · 3. 전달함수 식별·검증 | 완료. **2026-11-15 재식별 모델이 기준**(아래 "기준 모델") |
 | 4. 폐루프 스텝 응답 · 5. PID 설계·시험 · 6. Z-N 설계·시험 | 구현 완료(펌웨어 2.1), 하드웨어 폐루프 시험 대부분 완료(PI + 노치, PID + 노치, Z-N PI·PID·PID + 노치). P 등 남음 |
-| 7. 강화학습 제어기 | 실기 SAC 실험 마침(RL 펌웨어 + PC 학습기). 최종 `data/20261115_rl8` best, 감쇠 보상 `rl9`은 효과 없음 |
+| 7. 강화학습 제어기 | 옛 모터: 순수 SAC `data/20261115_rl8` best(손튜닝 PID 대비). **11-16 모터 교체 뒤: PI + 노치 위의 잔차 RL `data/20261117_rl5`(펌웨어 1.2)** — 확인 시험 RMS 1.68° vs 1.85°, 정상상태 PID와 같음 |
 | 시연 | 시연용 펌웨어 `AEROPEND_DEMO 1.0`(rl8 best 정책을 정수 양자화해 보드에 넣음 + 조정 가능한 PID) + `lab/demo.html`. 벤치 검증 완료, **모터 돌린 실기 시연은 아직** ([docs/DEMO.md](docs/DEMO.md)) |
 
 ## 저장소 지도
@@ -18,7 +18,7 @@
 | 경로 | 내용 |
 |---|---|
 | `firmware/aeropendulum_lab/aeropendulum_lab.ino` | Uno 펌웨어 (단일 파일, 외부 라이브러리 없음) |
-| `firmware/aeropendulum_rl/aeropendulum_rl.ino` | 강화학습용 펌웨어 `AEROPEND_RL 1.0` (실험용에서 갈라짐: 개루프 프로파일·RELAY 삭제, `RL`/`SAFE`/`RUN RL`/`A` 추가, EEPROM 형식 공유). 프로토콜은 `docs/RL_PROTOCOL.md` |
+| `firmware/aeropendulum_rl/aeropendulum_rl.ino` | 강화학습용 펌웨어 `AEROPEND_RL 1.2` (실험용에서 갈라짐: 개루프 프로파일·RELAY 삭제, `RL`/`SAFE`/`RUN RL`/`A` 추가, 1.1 = PID + 잔차 모드, 1.2 = 잔차가 노치 통과, EEPROM 형식 공유). 프로토콜은 `docs/RL_PROTOCOL.md` |
 | `firmware/aeropendulum_demo/` | 시연용 펌웨어 `AEROPEND_DEMO 1.0` (RL 펌웨어에서 갈라짐: 보드 위 고정 RL 정책 + PID, `MODE`/`OUT`/`NN` 추가, 가진·CLSTEP·RL 스트리밍 삭제, EEPROM 형식 공유) + 자동 생성 `policy.h`. 설명·프로토콜은 `docs/DEMO.md` |
 | `rl/` | Python SAC 실기 학습기 (`python -m rl.train`), 가짜 보드, 벤치 시험 `rl.bench_test`(83항목), 자체 시험 `rl.selftest`, 웹 대시보드. `.venv`의 Python을 씁니다(PyTorch). 설명은 `rl/README.md` |
 | `lab/` | Web Serial 실험 UI (`index.html`, `app.js`), 시뮬레이터 `sim.js`, 계산 `sysid.js`, 차트 `chart.js`. 시연 UI `demo.html`·`demo.js` + 시뮬레이터 `demo_sim.js`·`demo_policy.js`(자동 생성) |
@@ -44,7 +44,7 @@
 | 변경 | 확인 |
 |---|---|
 | 펌웨어 | `arduino-cli compile -b arduino:avr:uno --output-dir build/aeropendulum_lab firmware/aeropendulum_lab` (경고 0, 플래시 확인) → 보드가 있으면 업로드 후 `scripts/Test-LabFirmware.ps1 -Port COM4` |
-| RL 펌웨어 | `scripts/Build-Rl.ps1` (경고 0, 현재 29942 B = 92%) → 업로드 후 `.venv\Scripts\python.exe -m rl.bench_test --port COM4` (벤치 모드에서만 돌고 `CFG BACKUP`/`RESTORE`) |
+| RL 펌웨어 | `scripts/Build-Rl.ps1` (경고 0, 현재 30362 B = 94%) → 업로드 후 `.venv\Scripts\python.exe -m rl.bench_test --port COM4` (벤치 모드에서만 돌고 `CFG BACKUP`/`RESTORE`) |
 | `rl/` | `python -m rl.selftest --quick`, `python -m rl.bench_test --fake --fast`. RL 프로토콜을 바꾸면 펌웨어, `rl/fake_board.py`, `rl/bench_test.py`, `docs/RL_PROTOCOL.md`를 함께 고칩니다 |
 | 시연 펌웨어 | `scripts/Build-Demo.ps1` (경고 0, 현재 31742 B = **98%**, `-NnTest` 빌드 32150 B) → 업로드 후 `.venv\Scripts\python.exe -m rl.demo_test --port COM4` (벤치 모드만, EEPROM 안 바꿈; `-NnTest` 빌드면 `--nn 300`). 핵심 지표: 시연 설정에서 `miss 0`, 추론 벽시계 < 20 ms(현재 14.3 ms). 정책·양자화를 바꾸면 `python -m rl.demo_policy`(policy.h + lab/demo_policy.js). 프로토콜을 바꾸면 펌웨어, `lab/demo_sim.js`, `lab/demo.js`, `rl/demo_test.py`, `docs/DEMO.md`를 함께 고칩니다 |
 | `sysid.js` | `node scripts/test_sysid.js` |
@@ -95,6 +95,6 @@
 
 1. **남은 하드웨어 폐루프 시험** (목표 4–6, 11-15 모델): P(1.59)(Z-N PID와 Z-N PID + 노치는 `data/20261115_run3`에서 20–25° 시험: 노치 없으면 2.34 Hz 리플 지속, 노치 넣으면 PI + 노치 수준; 노치 없는 30°는 모델상 불안정이라 안 함), 같은 스텝의 손튜닝 PID, PI + 노치 30 s 유지 리플, 30° 스텝. 절차는 `analysis/pid_design/REPORT.md` → UI ⑥, 결과는 `data/<날짜>_runN/`.
    - UI에서 이득을 바꾸면 반드시 **이득 적용** 후 `PIDCFG` 줄로 확인하게 안내하세요(CSV `# pid` 줄 = 보드에 실제로 적용된 값). 11-15 run2의 Z-N PID 의도 기록 다섯 개는 이걸 놓쳐 Kp 2.19로 적용돼 있었습니다.
-2. **목표 7 강화학습**: 실기 실험은 마쳤습니다(남은 실험 시간 부족). 최종 결과는 `data/20261115_rl8` best(ep 120)와 그 30 s 유지 시험(`rl8/play`)입니다. 마지막 시도 `data/20261115_rl9`(감쇠 보상)는 실기에서 리플을 줄이지 못하고 편향만 키웠습니다. 남은 것은 보고서 정리이고, 사용자가 다시 요청하기 전에는 새 RL 실행을 제안하지 마세요.
+2. **목표 7 강화학습**: 옛 모터 결과는 `data/20261115_rl8` best(순수 SAC, 손튜닝 PID 대비), 모터 교체 뒤 결과는 `data/20261117_rl5`(잔차 RL on PI + 노치, `rl/configs/motor2.json`, 펌웨어 1.2, [RL_HISTORY D13](docs/RL_HISTORY.md#d13-모터-교체-뒤-잔차-rl-11-16)). 새 모터 보호로 PWM 230·가동 120 s/휴식 90 s. 남은 것은 보고서 정리이고, 사용자가 다시 요청하기 전에는 새 RL 실행을 제안하지 마세요.
    - RL 설정을 바꾸면 [docs/RL_HISTORY.md](docs/RL_HISTORY.md)에 한 항목을 추가합니다. 결과 요약은 [RESULTS.md §3](docs/RESULTS.md#3-강화학습-목표-7).
    - 보드 위 MLP 경로는 대안으로만 남아 있습니다(플래시·RAM 측정은 [RL_HISTORY.md D1](docs/RL_HISTORY.md#d1-실행-경로-pc-스트리밍)). 넣는다면 추론 시간을 `S` 줄 `maxTick`으로 먼저 확인하세요(틱 예산 5 ms).

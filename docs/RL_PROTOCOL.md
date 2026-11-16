@@ -1,4 +1,4 @@
-# RL 펌웨어 프로토콜 (AEROPEND_RL 1.0)
+# RL 펌웨어 프로토콜 (AEROPEND_RL 1.2)
 
 강화학습(목표 7)용 펌웨어 [firmware/aeropendulum_rl/aeropendulum_rl.ino](../firmware/aeropendulum_rl/aeropendulum_rl.ino) ↔ Python 학습기 [rl/](../rl/) ↔ 가짜 보드 `rl/fake_board.py`가 쓰는 프로토콜입니다. **명령이나 출력 형식을 바꾸면 세 곳과 이 문서, `rl/bench_test.py`를 같이 고칩니다.**
 
@@ -8,7 +8,7 @@
 
 | | 내용 |
 |---|---|
-| 식별 | `HELLO` → `READY AEROPEND_RL 1.0` |
+| 식별 | `HELLO` → `READY AEROPEND_RL 1.2` (1.0 = 증분 모드만, 1.1 = 잔차 모드 추가 (2026-11-16), 1.2 = 잔차가 노치를 통과 (11-17)) |
 | 삭제 | `RUN STEP`, `RUN STAIR`, `RUN CHIRP`, `RUN PRBS`, `RUN RELAY` (→ `ERR UNKNOWN_PROFILE`) |
 | 유지 | 연결·상태, `U`, `LIM`, `STREAM`, `BENCH`, 센서·보정 전부, `PID`, `NOTCH`, `REF`, `RUN CLSTEP`, 모든 안전장치 |
 | 추가 | `RL`, `SAFE`, `RUN RL`, `A` (아래) |
@@ -29,22 +29,37 @@ PC가 정책을 계산하고 보드는 실행과 안전을 맡습니다. 행동�
 
 지연이 `lag` 샘플로 고정되므로 PC 쪽 지터는 누락(`miss`)으로만 나타납니다. 한 결정 구간에 `A`가 두 번 오면 마지막 것만 씁니다.
 
+### 잔차 모드 (1.1~, `RL` 6번째 인자 `res` > 0)
+
+보드가 **매 샘플 PID(`REF` 기준, 노치 포함)를 계산**하고, 정책은 그 출력에 더할 **잔차 r의 절댓값**을 보냅니다. `A 0`만 보내면 순수 PID와 같습니다.
+
+```
+샘플 k + lag:  그 사이 A 가 왔으면 r ← clamp(A, ±res), 안 왔으면 r 유지, miss += 1
+매 샘플:       u = clamp(ff + N(Kp·e + I − Kd·ω_f + r), [u_lo, min(u_hi, PWMmax)])   (N = 노치, 꺼져 있으면 1)
+```
+
+- **1.2부터 r은 노치 앞에 더해** PID 항과 함께 노치를 통과합니다(공진 대역 차단). 1.1은 노치 뒤에 더해서, 실기 학습(11-17 rl4) 중 정책이 2.7 Hz 공진 리플을 PID의 2배로 키웠습니다. 일정한 r은 그대로 통과합니다(노치 DC 이득 1). 포화 판정(적분 와인드업 방지)은 전체 출력으로 합니다.
+- `RUN RL` 시작 때 PID 적분을 `I = u − ff`(u = 그 순간 출력)로 맞춰 `REF` 유지에서 끊김 없이 넘겨받습니다. r = 0에서 시작합니다.
+- 에피소드 중 `REF`는 PID 기준을 바꿉니다(증분 모드에서는 기록용 기준만).
+- `du_max`는 쓰지 않습니다. `RL`을 5인자로 보내면 `res = 0`(증분 모드)이 됩니다.
+- 1.2부터 `D` 줄의 θ<sub>acc</sub>는 `STREAM` ≥ 2이면 샘플이 아닌 틱에서 계산합니다(한 틱 = 5 ms 전 가속도). 잔차 모드에서 샘플마다 PID를 계산하느라 샘플 틱이 5 ms를 넘었기 때문입니다(1.1 실기 `maxTick` 5.2–5.4 ms).
+
 ## 추가 명령
 
 | 명령 | 범위 | 설명 |
 |---|---|---|
-| `RL <dec> <lag> <du_max> <u_lo> <u_hi>` | dec 1–20, lag 1–dec, du_max 1–255, 0 ≤ u_lo < u_hi ≤ 255 | 결정 주기(샘플), 적용 지연(샘플), 한 번에 바꿀 수 있는 최대 PWM, 정책 PWM 범위. 에피소드 중에는 `ERR BUSY` → `RLCFG …` |
+| `RL <dec> <lag> <du_max> <u_lo> <u_hi> [res]` | dec 1–20, lag 1–dec, du_max 1–255, 0 ≤ u_lo < u_hi ≤ 255, res 0–100 (생략 = 0) | 결정 주기(샘플), 적용 지연(샘플), 한 번에 바꿀 수 있는 최대 PWM, 정책 PWM 범위, 잔차 한계(0 = 증분 모드). 에피소드 중에는 `ERR BUSY` → `RLCFG …` |
 | `SAFE <th_lo_cdeg> <th_hi_cdeg> <w_max_cdps>` | −18000…18000, lo < hi, 1–200000 | 에피소드 안전 범위. 에피소드 중에는 `ERR BUSY` → `RLCFG …` |
 | `RUN RL <r_cdeg> <dur_ms> <home_cdeg>` | \|r\|, \|home\| ≤ 17000 | 에피소드 시작. `PID` 이득이 모두 0이면 `ERR NO_PID`, IMU 미준비면 `ERR IMU_NOT_READY` |
-| `A <du>` | 정수 (±du_max로 자름) | 다음 적용 시점의 PWM 증분. 에피소드 밖이면 `ERR NOT_RL` |
-| `REF <cdeg>` | | **에피소드 중에는** 기록용 기준 `ref`만 바꿈 (`EVT REF <cdeg>`, 제어에는 영향 없음). 에피소드 밖에서는 PROTOCOL.md와 같음 |
+| `A <du>` | 정수 (±du_max로 자름; 잔차 모드는 ±res) | 다음 적용 시점의 PWM 증분 (잔차 모드: 잔차 절댓값). 에피소드 밖이면 `ERR NOT_RL` |
+| `REF <cdeg>` | | **에피소드 중에는** 기준 `ref`를 바꿈 (`EVT REF <cdeg>`; 증분 모드는 기록용, 잔차 모드는 PID 기준). 에피소드 밖에서는 PROTOCOL.md와 같음 |
 
-재부팅 기본값: `dec=2 lag=1 dumax=10 ulo=0 uhi=255`, `SAFE −2000 6000 40000` (−20°…60°, 400 °/s). 저장하지 않습니다.
+재부팅 기본값: `dec=2 lag=1 dumax=10 ulo=0 uhi=255 res=0`, `SAFE −2000 6000 40000` (−20°…60°, 400 °/s). 저장하지 않습니다.
 
 `GET`은 `CFG`, `CALVAL`, `PIDCFG` 뒤에 `RLCFG`를 붙입니다.
 
 ```
-RLCFG dec=2 lag=1 dumax=10 ulo=40 uhi=210 thlo=-2000 thhi=6000 wmax=40000
+RLCFG dec=2 lag=1 dumax=10 ulo=40 uhi=210 res=0 thlo=-2000 thhi=6000 wmax=40000
 ```
 
 ## 에피소드

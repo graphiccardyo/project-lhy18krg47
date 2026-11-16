@@ -5,7 +5,7 @@
     # arduino-cli.exe 경로 (PATH에 없을 때)
     [string]$Cli = ''
 )
-# Aeropendulum RL 펌웨어(firmware/aeropendulum_rl, AEROPEND_RL 1.0) 컴파일/업로드
+# Aeropendulum RL 펌웨어(firmware/aeropendulum_rl, AEROPEND_RL 1.2) 컴파일/업로드
 # 외부 라이브러리 불필요 (Arduino AVR 코어의 Wire, EEPROM만 사용)
 # EEPROM 형식이 실험용 펌웨어와 같아서 번갈아 올려도 보정·영점이 유지됩니다.
 $ErrorActionPreference = 'Stop'
@@ -33,5 +33,5 @@ if ($Upload) {
     Write-Host "업로드: ${Port} (시리얼 모니터/실험실 페이지가 포트를 쓰고 있으면 닫으세요)"
     & $Cli upload -b arduino:avr:uno -p $Port --input-dir $out $sketch
     if ($LASTEXITCODE -ne 0) { throw '업로드 실패' }
-    Write-Host '완료. HELLO 응답이 READY AEROPEND_RL 1.0 인지 확인하세요.'
+    Write-Host '완료. HELLO 응답이 READY AEROPEND_RL 1.2 인지 확인하세요.'
 }

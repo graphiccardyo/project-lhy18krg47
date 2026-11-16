@@ -3,6 +3,8 @@
 - 액터: MLP(obs → hidden → hidden → [μ, log σ]), tanh 로 [−1, 1] 에 가둔 가우시안.
 - 크리틱: 쌍둥이 Q 를 한 텐서로 묶은 앙상블(baddbmm) — 작은 망에서 파이썬/연산 호출 수를 반으로 줄임.
 - 자동 엔트로피(α), 소프트 타깃 갱신, 리플레이 버퍼.
+- 선택: 행동 매끄러움 정칙화 CAPS (`caps_t`, `caps_s`, 기본 0 = 끔 → 표준 SAC 와 같음).
+- `init_from(d, actor_path)`: 다른 실행(가짜 보드 사전학습)의 액터·크리틱·α 로 시작 (버퍼·옵티마이저는 새로).
 - 체크포인트: 망·타깃·옵티마이저·α·카운터 (sac.pt) + 버퍼 (buffer.npz). 임시 파일에 쓴 뒤 바꿔치기.
 - `NumpyPolicy`: 액터 가중치의 numpy 사본. 제어 루프(읽기 스레드)에서 torch 없이 추론 (약 10–20 µs).
 - 정책 스냅샷: `save_policy(d)` → d/actor.pt (액터만), `load_policy(path)` 는 actor.pt 와 sac.pt 둘 다 읽음.
@@ -204,6 +206,8 @@ class SAC:
             for p in cp:
                 p.requires_grad_(True)
             pi_loss = (alpha * logp - qn).mean()
+            if cfg.caps_t > 0 or cfg.caps_s > 0:
+                pi_loss = pi_loss + self._caps(o, o2, d)
             self.opt_actor.zero_grad(set_to_none=True)
             pi_loss.backward()
             self.opt_actor.step()
@@ -218,7 +222,25 @@ class SAC:
             self.updates += 1
         self.last = dict(q_loss=float(q_loss.detach()), pi_loss=float(pi_loss.detach()), alpha=float(alpha),
                          entropy=float(-lp), q_mean=float(q.detach().mean()))
+        if cfg.caps_t > 0 or cfg.caps_s > 0:
+            self.last['caps'] = self._caps_last
         return n
+
+    def _caps(self, o, o2, d):
+        """행동 매끄러움 정칙화 (CAPS, Mysore et al. 2021) — 결정적 행동 tanh(μ) 에 대해
+        시간 항 λ_T·‖π(o) − π(o')‖² (다음 결정 관측, 종단 전이 제외) + 공간 항 λ_S·‖π(o) − π(o + ε)‖² (ε ~ N(0, σ²), 정규화 관측).
+        보상 벌점(w_du·w_ddu)과 달리 Q 추정 잡음을 거치지 않고 액터를 직접 매끄럽게 함. 기본 끔 (λ = 0)."""
+        cfg = self.cfg
+        m0 = torch.tanh(self.actor(o)[0])
+        loss = torch.zeros(())
+        if cfg.caps_t > 0:
+            m1 = torch.tanh(self.actor(o2)[0])
+            loss = loss + cfg.caps_t * (((m0 - m1) ** 2).sum(1, keepdim=True) * (1 - d)).mean()
+        if cfg.caps_s > 0:
+            ms = torch.tanh(self.actor(o + cfg.caps_eps * torch.randn_like(o))[0])
+            loss = loss + cfg.caps_s * ((m0 - ms) ** 2).sum(1).mean()
+        self._caps_last = float(loss.detach())
+        return loss
 
     def update_critic(self, n: int = 1):
         """크리틱만 경사 갱신 n 번 (액터·α 고정). 분기(rl.fork) 때 크리틱을 지금 액터에 다시 맞추는 용도.
@@ -279,6 +301,24 @@ class SAC:
             self.buffer.load(bp)
         self.sync_policy()
         return state.get('extra', {})
+
+    def init_from(self, ckpt_dir: str, actor_path: str | None = None) -> dict:
+        """사전학습 이어받기: ckpt_dir/sac.pt 의 크리틱·타깃·α (+ 액터; actor_path 를 주면 그 스냅샷의 액터).
+        버퍼·옵티마이저 상태·갱신 카운터는 가져오지 않습니다 (다른 플랜트의 전이를 섞지 않음)."""
+        state = torch.load(os.path.join(ckpt_dir, 'sac.pt'), weights_only=False, map_location='cpu')
+        self.critic.load_state_dict(state['critic'])
+        self.target.load_state_dict(state['target'])
+        if actor_path:
+            sd, info = load_actor_state(actor_path)
+        else:
+            sd, info = state['actor'], dict(file=os.path.join(ckpt_dir, 'sac.pt'), updates=state.get('updates'))
+        self.actor.load_state_dict(sd)
+        alpha = float(info.get('alpha') or float(state['log_alpha'].exp()))
+        with torch.no_grad():
+            self.log_alpha.copy_(torch.tensor(math.log(alpha)))
+        self.sync_policy()
+        return dict(critic=os.path.join(ckpt_dir, 'sac.pt'), actor=info['file'], alpha=alpha,
+                    src_updates=info.get('updates'))
 
     # ---- 정책만 (스냅샷·재생용: 액터 가중치만, 버퍼·크리틱·옵티마이저 없음)
     def save_policy(self, d: str):

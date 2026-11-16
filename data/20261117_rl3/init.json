@@ -1,0 +1,9 @@
+{
+ "critic": "data/20261116_sim1\\checkpoint\\sac.pt",
+ "actor": "data/20261116_sim1\\checkpoints\\best\\actor.pt",
+ "alpha": 0.0019417578587308526,
+ "src_updates": 594537,
+ "src": "C:\\Users\\avalo\\Desktop\\aeropendulum-main\\data\\20261116_sim1",
+ "snapshot": "best",
+ "time": "2026-11-17T00:38:45"
+}
