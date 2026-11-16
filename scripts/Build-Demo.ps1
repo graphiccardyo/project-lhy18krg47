@@ -2,12 +2,12 @@
     [string]$Port = 'COM4',
     # 지정하면 컴파일 후 우노에 업로드합니다. 업로드 전 모터 12V 전원을 끄세요.
     [switch]$Upload,
-    # 정책 계산 시험 명령 NN 을 넣어 빌드 (플래시 98%, rl/demo_test.py --nn 용). 시연에는 기본 빌드를 쓰세요.
+    # (호환용) 2.0부터 기본 빌드에 NN 시험 명령이 들어 있어 따로 줄 필요 없음
     [switch]$NnTest,
     # arduino-cli.exe 경로 (PATH에 없을 때)
     [string]$Cli = ''
 )
-# Aeropendulum 시연용 펌웨어(firmware/aeropendulum_demo, AEROPEND_DEMO 1.0: 고정 RL 정책 + PID) 컴파일/업로드
+# Aeropendulum 시연용 펌웨어(firmware/aeropendulum_demo, AEROPEND_DEMO 2.0: 고정 잔차 RL 정책 + PID) 컴파일/업로드
 # 외부 라이브러리 불필요 (Arduino AVR 코어의 Wire, EEPROM만 사용)
 # EEPROM 형식이 실험용 펌웨어와 같아서 번갈아 올려도 보정·영점이 유지됩니다.
 $ErrorActionPreference = 'Stop'
@@ -37,5 +37,5 @@ if ($Upload) {
     Write-Host "업로드: ${Port} (시리얼 모니터/실험실 페이지가 포트를 쓰고 있으면 닫으세요)"
     & $Cli upload -b arduino:avr:uno -p $Port --input-dir $out $sketch
     if ($LASTEXITCODE -ne 0) { throw '업로드 실패' }
-    Write-Host '완료. HELLO 응답이 READY AEROPEND_DEMO 1.0 인지 확인하세요.'
+    Write-Host '완료. HELLO 응답이 READY AEROPEND_DEMO 2.0 인지 확인하세요.'
 }

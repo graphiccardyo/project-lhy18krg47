@@ -2,14 +2,14 @@
 //
 // 시연용. 보드 혼자서 두 제어기 중 하나로 기준 각도를 유지합니다 (PC 의 Python/PyTorch 불필요).
 //   - PID (+ 선택 노치): 이득은 시리얼로 조정 (PID / NOTCH 명령, 실험용 펌웨어와 같은 식)
-//   - RL: 고정 정책 = 11-15 rl8 best (ep 120). 정수 양자화한 MLP 8-64-64-1 이 policy.h 에 들어 있음
-//         (python -m rl.demo_policy 로 생성). 관측·행동·적분 보조·시그마-델타는 rl/env.py 와 같은 식.
-// RL 펌웨어(firmware/aeropendulum_rl, AEROPEND_RL 1.0)에서 갈라져 나옴. EEPROM 형식은 같아 보정·영점을 공유함.
-// 프로토콜: docs/DEMO.md
+//   - RL: 잔차 RL (11-16 모터 교체 뒤 방식). 학습 때의 보드 PI + 노치(policy.h 의 RLPID_*, 고정) 출력에
+//         정책 잔차 r = RL_RES·a|a| (±15 PWM) 를 노치 앞에서 더함 — RL 펌웨어 AEROPEND_RL 1.2 잔차 모드와 같은 식.
+//         정책·설정은 python -m rl.demo_policy 가 실행 폴더(기본 data/20261117_rl5 ep 81 = manual_00081_041012)에서 policy.h 로 생성.
+//         관측은 rl/env.py _decide_residual 과 같음. 2.0 이전(1.0)은 11-15 rl8 증분 정책 — 커밋 a35dfe4.
+// RL 펌웨어(firmware/aeropendulum_rl)에서 갈라져 나옴. EEPROM 형식은 같아 보정·영점을 공유함. 프로토콜: docs/DEMO.md
 //
-// 정책 추론(곱셈 약 4 700 번)은 한 틱(5 ms)에 넣기엔 길어서, 틱 사이 빈 시간에 조각(뉴런 1–8개)으로 나눠 계산합니다.
-// 결정 샘플 k 에서 시작한 추론 결과는 k+2 샘플(20 ms 뒤)에 적용 — 학습 때의 PC 경로(dec 2, lag 2)와 같은 시간 구조.
-// 그때까지 못 끝내면 PWM 을 유지하고 miss 를 셉니다(학습기의 누락과 같은 처리).
+// 정책 추론은 틱 사이 빈 시간에 조각으로 나눠 계산합니다. 결정 샘플 k 에서 시작한 추론 결과는 k+2 샘플(20 ms 뒤)에
+// 적용 — 학습 때의 PC 경로(dec 2, lag 2)와 같은 시간 구조. 그때까지 못 끝내면 그 전 잔차를 유지하고 miss 를 셉니다.
 //
 // 배선 (기존 프로젝트와 동일)
 //   D5 → L298N ENA (ENA 점퍼 제거),  D7 → IN1,  D8 → IN2,  GND 공통
@@ -27,14 +27,23 @@
 #include <string.h>
 #include "policy.h"
 
-#define FW_ID "AEROPEND_DEMO 1.0"
+#define FW_ID "AEROPEND_DEMO 2.0"    // 2.0 = 잔차 RL (1.0 = rl8 증분 정책)
 #define USE_WATCHDOG 1
 #ifndef NN_TEST
-#define NN_TEST 0               // 1 = `NN` 정책 계산 시험 명령 (플래시 부족으로 기본 끔, rl/demo_test.py --nn 용)
+#define NN_TEST 1               // `NN` 정책 계산 시험 명령 (rl/demo_test.py --nn 용, 약 400 B). 0 이면 뺌
 #endif
 #ifndef DEMO_CAL
 #define DEMO_CAL 1
 #endif
+
+// PID 이득 묶음 (Arduino 가 함수 원형을 파일 앞쪽에 넣으므로 형은 여기서 정의). 쓰는 곳은 아래 PID 절
+struct Pid {
+  float kp, ki, kd;
+  int16_t ff;
+  uint16_t nfc, nzz, nzp;          // 노치 중심 [0.01 Hz] (0 = 끔), ζz·ζp ×1000
+  uint8_t umin;
+  float b0, b1, b2, a1, a2;
+};
 
 // ---------------------------------------------------------------- hardware
 const uint8_t ENA_PIN = 5;
@@ -174,7 +183,7 @@ float theta = 0, omega = 0, thetaAcc = 0;   // deg, deg/s
 
 uint8_t divCount = 0;
 uint8_t outDiv = 2, outCount = 0;   // D 줄은 outDiv 샘플마다 (기본 20 ms — 직렬 출력 시간을 추론에 돌림). OUT 1 = 10 ms
-int16_t uMaxPwm = 255;
+int16_t uMaxPwm = DEMO_UMAX;  // 기본 = 실행 config 의 LIM (11-16 새 모터 보호 230)
 int16_t angleLimitCdeg = 10000;
 bool bench = false;            // 벤치(드라이런): 모터 핀 항상 LOW, 값만 기록
 
@@ -204,74 +213,79 @@ float refDeg = 0;
 int16_t refCdeg = 0;
 
 // ---------------------------------------------------------------- PID (실험용·RL 펌웨어와 같은 식)
-// u = ff + Kp·e + Ki·∫e − Kd·ω_f, 출력단 선택 노치, 포화 + 조건부 적분
-struct Pid {
-  float kp = 4.30f, ki = 13.3f, kd = 0;   // 기본 = 권장 PI + 2.35 Hz 노치 (RESULTS.md §2)
-  int16_t ff = 150;
-  uint16_t nfc = 235;
-  uint16_t nzz = 150, nzp = 700;
-  uint8_t umin = 40;
-  float b0 = 1, b1 = 0, b2 = 0, a1 = 0, a2 = 0;
-} pid;
+// u = ff + 노치(Kp·e + Ki·∫e − Kd·ω_f + r), 포화 + 조건부 적분. r = RL 잔차 (RL 이 아닐 때 0)
+// 이득 묶음이 둘: pid = 사용자 이득(PID/NOTCH 명령), pidRl = 정책을 학습할 때 보드에 있던 이득(policy.h, 고정).
+// RL 중에는 pidRl 을 씁니다 — 정책은 그 PID 위에서 학습한 잔차라서, 사용자가 이득을 바꿔도 RL 조건은 그대로.
+// 기본 = 권장 PI + 2.35 Hz 노치. ff 는 RL 기반 PID 와 같게 두어 PID ↔ RL 전환이 출력 끊김 없이 이어지게 함
+Pid pid = {4.30f, 13.3f, 0, RLPID_FF, 235, 150, 700, 40, 1, 0, 0, 0, 0};
+Pid pidRl = {RLPID_KP, RLPID_KI, RLPID_KD, RLPID_FF, RLPID_NFC, RLPID_NZZ, RLPID_NZP, RLPID_UMIN, 1, 0, 0, 0, 0};
+Pid *P = &pid;                     // 지금 쓰는 묶음
 float pidI = 0, omF = 0, nz1 = 0, nz2 = 0;
+int16_t pidAdd = 0;                // RL 잔차 r [PWM] — 노치 앞에서 더함 (RL 펌웨어 1.2 와 같음)
 
-void notchCoeffs() {
-  pid.b0 = 1; pid.b1 = pid.b2 = pid.a1 = pid.a2 = 0;
-  if (!pid.nfc) return;
-  float w = 6.2831853f * pid.nfc * 0.01f;
+void notchCoeffs(Pid &q) {          // 쌍선형 변환 + 중심주파수 프리워핑
+  q.b0 = 1; q.b1 = q.b2 = q.a1 = q.a2 = 0;
+  if (!q.nfc) return;
+  float w = 6.2831853f * q.nfc * 0.01f;
   float k = w / tan(w * TS * 0.5f), k2 = k * k, w2 = w * w;
-  float zz = pid.nzz * 0.001f, zp = pid.nzp * 0.001f;
+  float zz = q.nzz * 0.001f, zp = q.nzp * 0.001f;
   float a0 = k2 + 2 * zp * w * k + w2;
-  pid.b0 = (k2 + 2 * zz * w * k + w2) / a0;
-  pid.b1 = 2 * (w2 - k2) / a0;
-  pid.b2 = (k2 - 2 * zz * w * k + w2) / a0;
-  pid.a1 = pid.b1;
-  pid.a2 = (k2 - 2 * zp * w * k + w2) / a0;
+  q.b0 = (k2 + 2 * zz * w * k + w2) / a0;
+  q.b1 = 2 * (w2 - k2) / a0;
+  q.b2 = (k2 - 2 * zz * w * k + w2) / a0;
+  q.a1 = q.b1;
+  q.a2 = (k2 - 2 * zp * w * k + w2) / a0;
 }
 
-void pidReset() { pidI = 0; omF = omega; nz1 = nz2 = 0; notchCoeffs(); }
+void pidReset() { pidI = 0; omF = omega; nz1 = nz2 = 0; }
 
 int16_t pidStep(float r) {
+  const Pid &q = *P;
   float e = r - theta;
   omF += TS / (0.0159f + TS) * (omega - omF);
-  float v = pid.kp * e + pidI - pid.kd * omF;
-  if (pid.nfc) {
-    float y = pid.b0 * v + nz1;
-    nz1 = pid.b1 * v - pid.a1 * y + nz2;
-    nz2 = pid.b2 * v - pid.a2 * y;
+  float v = q.kp * e + pidI - q.kd * omF + pidAdd;
+  if (q.nfc) {                     // 2차 IIR (전치 직접형 II)
+    float y = q.b0 * v + nz1;
+    nz1 = q.b1 * v - q.a1 * y + nz2;
+    nz2 = q.b2 * v - q.a2 * y;
     v = y;
   }
-  float u = pid.ff + v;
-  float hi = uMaxPwm, lo = pid.umin < hi ? pid.umin : hi;
+  float u = q.ff + v;
+  float hi = uMaxPwm, lo = q.umin < hi ? q.umin : hi;
   float us = u < lo ? lo : (u > hi ? hi : u);
   if (u == us || (u > us && e < 0) || (u < us && e > 0)) {
-    pidI += pid.ki * e * TS;
+    pidI += q.ki * e * TS;
     if (pidI > 255) pidI = 255;
     if (pidI < -255) pidI = -255;
   }
   return (int16_t)lround(us);
 }
 
-// ---------------------------------------------------------------- RL 정책 (rl/env.py 와 같은 관측·행동, config = data/20261115_rl8/config.json)
-const uint8_t RL_DUMAX = 10;            // 한 결정의 최대 PWM 증분
-const int16_t RL_ULO = 40, RL_UHI = 255;
-const int16_t SAFE_THLO = -1000, SAFE_THHI = 7000;   // [cdeg] 벗어나면 PID 로 복귀 (학습 때 SAFE 와 같음)
-const float SAFE_WMAX = 600.0f;                       // [deg/s]
-const float RL_AW = 0.46651200f;        // 1 − exp(−2π·10 Hz·Ts)  ω 저역통과
-const float RL_AI = 0.00332779f;        // 1 − exp(−Ts/3 s)       오차 느린 평균
-const float RL_KIX = 0.012f;            // k_I·dec·Ts/du_max = 6·0.02/10  고정 적분 보조 (정규화, 1° 당)
-const int16_t DU_NONE = -32768;         // 직전 결정 추론이 늦어 du 가 없었음
+// 이득 묶음 바꾸기. 이득·노치가 같으면 ff 차이만 적분으로 옮겨 출력이 그대로 이어지고,
+// 다르면 RL 펌웨어가 에피소드를 시작할 때처럼 노치 상태 0, 적분 = 직전 출력 u0 − ff.
+void pidUse(Pid *to, int16_t u0) {
+  if (to == P) return;
+  bool same = to->kp == P->kp && to->ki == P->ki && to->kd == P->kd && to->nfc == P->nfc &&
+              to->nzz == P->nzz && to->nzp == P->nzp;
+  float i = same ? pidI + P->ff - to->ff : u0 - to->ff;
+  if (!same) nz1 = nz2 = 0;
+  P = to;
+  pidI = i > 255 ? 255 : (i < -255 ? -255 : i);
+}
+
+// ---------------------------------------------------------------- RL 정책 (잔차 RL, rl/env.py _decide_residual 과 같은 관측·행동)
+// 결정 샘플 k: 이번 샘플 출력 u 까지 계산한 뒤 관측 → 추론 시작. 결과 r = RL_RES·a|a| 은 k+2 샘플에 pidAdd 로 적용.
+// 상수(잔차 크기, 출력 범위, 정규화, 안전 범위)는 실행 config 에서 policy.h 로 생성됨.
+const float RL_ITH = 1.0f / RL_TH_S, RL_IW = 1.0f / RL_W_S, RL_IU = 1.0f / RL_U_S, RL_IEI = 1.0f / RL_EI_S,
+            RL_IEF = 1.0f / RL_EF_S;
 
 uint8_t rlN = 0;              // 결정 위상 (0 = 결정·적용 샘플, 1 = 그 사이)
 bool rlFirst = true;          // 첫 결정 (직전 값 없음)
-int16_t rlU = 0;              // 정책 PWM (영차 유지)
-int16_t rlPendDu = 0;         // 마지막 추론이 고른 증분 (다음 결정 샘플에 적용)
-bool rlPendOk = false;
-float rlWf = 0, rlEi = 0, rlResid = 0;
-float rlPrevA = 0, rlPrevXi = 0, rlPrevTh = 0, rlA = 0;
-int16_t rlPrevDu = 0, rlPrevU = 0;
+bool rlPendOk = false;        // 추론이 끝나 적용을 기다리는 잔차가 있음
+int16_t rlPendR = 0;          // 그 잔차 [PWM]
+float rlPendA = 0, rlAppA = 0;   // 그 행동 a / 지금 적용된 잔차의 행동 (관측 6번째)
+float rlWf = 0, rlEi = 0, rlPrevTh = 0;
 uint16_t rlMiss = 0;
-float rlXi = 0;               // 진행 중인 결정의 적분 보조 몫
 
 // 정수 추론 엔진 (계산 방식: rl/demo_policy.py). C 로 쓰면 곱 하나에 약 70 사이클(추론 21 ms)이라
 // 곱셈-누산을 어셈블리로 씀: 1층 16×16 비트(곱 4번, AVR201 의 부호 확장 방법), 2층은 0 이 아닌 h1 만 두 행씩.
@@ -395,7 +409,7 @@ void nnWork() {
   } else if (nnStage == 2) {
     for (uint8_t c = 0; c < 2 && nnRow < NN_H; ++c) {
     int32_t a0 = (int32_t)pgm_read_dword(&NN_B2[nnRow]), a1 = (int32_t)pgm_read_dword(&NN_B2[nnRow + 1]);
-    mac2(NN_W2P + nnRow * NN_H, a0, a1);      // 쌍 p = nnRow/2 의 시작 = p·128 = nnRow·64
+    mac2(NN_W2P + nnRow * NN_H, a0, a1);      // 쌍 p = nnRow/2 의 시작 = p·2·NN_H = nnRow·NN_H
     for (uint8_t q = 0; q < 2; ++q) {
       int16_t h = clampH(shr(q ? a1 : a0, pgm_read_byte(&NN_S2[nnRow + q])));
       if (h) nnAcc3 += (int32_t)(int16_t)pgm_read_word(&NN_W3[nnRow + q]) * h;
@@ -415,7 +429,7 @@ int16_t qx(float v) {
 
 void nnStart() { nnStage = 1; nnRow = 0; nnNzN = 0; nnStartUs = micros(); }
 
-// 추론이 끝났으면 행동 → 정수 증분 (행동 곡선 a·|a|, 고정 적분 보조, 시그마-델타). env.on_D 의 뒷부분
+// 추론이 끝났으면 행동 → 잔차 r = RL_RES·a|a| (다음 결정 샘플에 적용). env._decide_residual 의 뒷부분
 void nnFinish() {
   if (nnStage != 3 || !rlOn) return;
   nnStage = 0;
@@ -425,51 +439,40 @@ void nnFinish() {
   float a = tanh(nnMu());
   if (a > 1) a = 1;
   if (a < -1) a = -1;
-  float x = a * fabs(a) + rlXi;
-  rlResid += x * RL_DUMAX;
-  long du = lround(rlResid);
-  if (du > RL_DUMAX) du = RL_DUMAX;
-  if (du < -RL_DUMAX) du = -RL_DUMAX;
-  rlResid -= du;
-  if (rlResid > 1) rlResid = 1;
-  if (rlResid < -1) rlResid = -1;
-  rlA = a;
-  rlPrevA = a;
-  rlPrevDu = du;
-  rlPendDu = du;
+  rlPendA = a;
+  rlPendR = (int16_t)lround(RL_RES * a * fabs(a));
   rlPendOk = true;
 }
 
-// 정책 PWM 범위: u_lo 먼저, min(u_hi, LIM) 나중 (LIM 이 u_lo 보다 낮으면 LIM 이 이김 — RL 펌웨어와 같음)
+// RL 중 출력 범위: u_lo 먼저, min(u_hi, LIM) 나중 (RL 펌웨어와 같음)
 int16_t clampRl(int16_t u) {
   if (u < RL_ULO) u = RL_ULO;
   int16_t hi = min(RL_UHI, uMaxPwm);
   return u > hi ? hi : u;
 }
 
-// u0 = 이번 샘플에 나가는 PID 출력 → 다음 샘플(n = 0)부터 RL 이 이어받음
+// u0 = 이번 샘플에 나간 PID 출력 → 다음 샘플(n = 0)부터 RL 기반 PID + 잔차
 void rlStart(int16_t u0) {
   rlOn = true;
   rlFirst = true;
   rlN = 0;
-  rlU = clampRl(u0);
   rlPendOk = false;
-  rlResid = 0;
+  pidAdd = 0;
+  rlAppA = 0;
   rlEi = 0;
-  rlA = 0;
   rlMiss = 0;
   nnStage = 0;
+  pidUse(&pidRl, u0);
   Serial.println(F("EVT RL ON"));
 }
 
-// RL → PID (bumpless: 적분항 I = u − ff)
+// RL → 사용자 PID (잔차를 빼고 같은 적분에서 이어 감)
 void rlToPid() {
   rlOn = false;
   nnStage = 0;
   settleCnt = 0;
-  pidReset();
-  float i = uOut - pid.ff;
-  pidI = i > 255 ? 255 : (i < -255 ? -255 : i);
+  pidAdd = 0;
+  pidUse(&pid, uOut);
 }
 
 // RL 한 샘플. thC/omC = D 줄과 같은 cdeg 반올림 값 (학습기도 D 줄 값으로 관측을 만듦)
@@ -477,11 +480,11 @@ int16_t rlStep(long thC, long omC) {
   float th = thC * 0.01f, om = omC * 0.01f;
   if (rlN == 0 && !rlFirst) {                 // 적용 시점 = 다음 결정 샘플 (lag = dec = 2)
     if (rlPendOk) {
-      rlU = clampRl(rlU + rlPendDu);
-    } else {
+      pidAdd = rlPendR;
+      rlAppA = rlPendA;
+    } else {                                  // 누락: 그 전 잔차 유지 (학습기와 같음), 늦은 추론은 버림
       rlMiss++;
-      nnStage = 0;                            // 늦은 추론은 버림
-      rlPrevDu = DU_NONE;
+      nnStage = 0;
     }
     rlPendOk = false;
   }
@@ -492,44 +495,32 @@ int16_t rlStep(long thC, long omC) {
     rlToPid();
     return pidStep(refDeg);
   }
+  int16_t u = clampRl(pidStep(refDeg));       // u = PID(ref) + r (RL 펌웨어 1.2 잔차 모드)
   float e = refCdeg * 0.01f - th;
   if (rlFirst) rlWf = om;
   else rlWf += RL_AW * (om - rlWf);
   rlEi += RL_AI * (e - rlEi);
   if (rlN == 0) {                             // 결정 샘플: 관측 → 추론 시작
-    float aStore = 0, dth = 0;
+    float dth = 0;
     if (!rlFirst) {
-      int16_t dEff = rlU - rlPrevU;
-      if (dEff == rlPrevDu) {
-        aStore = rlPrevA;                     // 보낸 그대로 적용됨 → 정책이 고른 연속값
-      } else {                                // 누락·범위 자르기 → 실제 정책 몫을 정책 공간으로
-        float xp = (float)dEff / RL_DUMAX - rlPrevXi;
-        if (xp > 1) xp = 1;
-        if (xp < -1) xp = -1;
-        aStore = xp < 0 ? -sqrt(-xp) : sqrt(xp);
-      }
       dth = th - rlPrevTh;
       if (dth > 5) dth = 5;
       if (dth < -5) dth = -5;
     }
-    nnX[0] = qx(e / 10.0f);
-    nnX[1] = qx((th - 25.0f) / 10.0f);
-    nnX[2] = qx(rlWf / 100.0f);
+    nnX[0] = qx(e * RL_ITH);
+    nnX[1] = qx((th - RL_TH_C) * RL_ITH);
+    nnX[2] = qx(rlWf * RL_IW);
     nnX[3] = qx(dth);
-    nnX[4] = qx((rlU - 125.0f) / 85.0f);
-    nnX[5] = qx(aStore);
-    nnX[6] = qx(rlEi / 2.0f);
-    nnX[7] = qx(tanh(e / 0.5f));
-    rlXi = RL_KIX * e;
-    rlPrevXi = rlXi;
-    rlPrevU = rlU;
+    nnX[4] = qx((u - RL_U_C) * RL_IU);
+    nnX[5] = qx(rlAppA);
+    nnX[6] = qx(rlEi * RL_IEI);
+    nnX[7] = qx(tanh(e * RL_IEF));
     rlPrevTh = th;
-    rlPrevDu = DU_NONE;                       // 추론이 끝나면 nnFinish 가 채움
     nnStart();
   }
   rlFirst = false;
   if (++rlN >= 2) rlN = 0;
-  return rlU;
+  return u;
 }
 
 // ---------------------------------------------------------------- motor
@@ -556,6 +547,8 @@ void stopAll() {
   nnStage = 0;
   settleCnt = 0;
   pidI = 0;
+  pidAdd = 0;
+  P = &pid;
   applyMotor(0);
 }
 
@@ -662,7 +655,7 @@ uint8_t ctrlMode() { return !hold ? 0 : (rlOn ? 3 : (wantRl ? 2 : 1)); }
 
 // mode = 이 줄의 pwm 을 실제로 만든 제어기 (RL 이 시작·복귀하는 샘플도 정확히)
 void sendData(long thC, long omC, uint8_t mode) {
-  // D,t_ms,pwm,theta_cdeg,omega_cdps,thetaAcc_cdeg,mode,ref_cdeg,a_milli
+  // D,t_ms,pwm,theta_cdeg,omega_cdps,thetaAcc_cdeg,mode,ref_cdeg,res_pwm
   char b[72];
   char *p = b;
   *p++ = 'D';
@@ -673,7 +666,7 @@ void sendData(long thC, long omC, uint8_t mode) {
   p = putNum(p, lround(thetaAcc * 100));
   p = putNum(p, mode);
   p = putNum(p, refCdeg);
-  p = putNum(p, mode == 3 ? lround(rlA * 1000) : 0);
+  p = putNum(p, mode == 3 ? pidAdd : 0);
   *p++ = '\r'; *p++ = '\n';
   Serial.write(reinterpret_cast<const uint8_t *>(b), p - b);
 }
@@ -696,18 +689,21 @@ void sendStatus() {
   satCount = 0; tickCount = 0; gatedCount = 0;
 }
 
+// 가속도계 각 (진단용). 샘플이 아닌 틱에서 계산 — 잔차 RL 은 샘플마다 PID + 관측을 계산해 샘플 틱이 무거움
+// (RL 펌웨어 1.2 와 같은 방법, D 줄의 θacc 는 한 틱(5 ms) 전 가속도)
+void updThetaAcc() {
+  float an = sqrt(acc[0] * acc[0] + acc[1] * acc[1] + acc[2] * acc[2]);
+  if (an > 0.1f) {
+    float ga[3] = {acc[0] / an, acc[1] / an, acc[2] / an};
+    thetaAcc = pivotAngle(ga);
+  }
+}
+
 void sampleStep() {
   float g[3];
   ahrs.gravity(g);
   theta = pivotAngle(g);
   omega = cfg.sign * gyr[cfg.axis];
-  if (outCount + 1 >= outDiv) {                // θ_acc(진단용)는 D 줄을 보내는 샘플에서만
-    float an = sqrt(acc[0] * acc[0] + acc[1] * acc[1] + acc[2] * acc[2]);
-    if (an > 0.1f) {
-      float ga[3] = {acc[0] / an, acc[1] / an, acc[2] / an};
-      thetaAcc = pivotAngle(ga);
-    }
-  }
   long thC = lround(theta * 100), omC = lround(omega * 100);
 
   int16_t u = 0;
@@ -793,6 +789,7 @@ void tick(float dt) {
   if (cal.active) calAccumulate();
 #endif
   if (++divCount >= STREAM_DIV) { divCount = 0; sampleStep(); }
+  else updThetaAcc();
 }
 
 // ---------------------------------------------------------------- commands
@@ -821,15 +818,25 @@ void printFix(float x, uint8_t d) {
   for (long q = m / 10; q > 0; q /= 10) Serial.write('0' + (f / q) % 10);
 }
 
-void printPid() {
-  Serial.print(F("PIDCFG kp=")); printFix(pid.kp, 3);
-  Serial.print(F(" ki=")); printFix(pid.ki, 3);
-  Serial.print(F(" kd=")); printFix(pid.kd, 3);
-  Serial.print(F(" ff=")); Serial.print(pid.ff);
-  Serial.print(F(" notch=")); Serial.print(pid.nfc);
-  Serial.print(F(" zz=")); Serial.print(pid.nzz);
-  Serial.print(F(" zp=")); Serial.print(pid.nzp);
-  Serial.print(F(" umin=")); Serial.println(pid.umin);
+void printGains(const Pid &q) {
+  Serial.print(F("kp=")); printFix(q.kp, 3);
+  Serial.print(F(" ki=")); printFix(q.ki, 3);
+  Serial.print(F(" kd=")); printFix(q.kd, 3);
+  Serial.print(F(" ff=")); Serial.print(q.ff);
+  Serial.print(F(" notch=")); Serial.print(q.nfc);
+  Serial.print(F(" zz=")); Serial.print(q.nzz);
+  Serial.print(F(" zp=")); Serial.print(q.nzp);
+  Serial.print(F(" umin=")); Serial.print(q.umin);
+}
+
+void printPid() { Serial.print(F("PIDCFG ")); printGains(pid); Serial.println(); }
+
+// RLPOL <정책> res=… ulo=… uhi=… <RL 기반 PID 이득>
+void printRlPol() {
+  Serial.print(F("RLPOL " RL_TAG " res=")); Serial.print(RL_RES);
+  Serial.print(F(" ulo=")); Serial.print(RL_ULO);
+  Serial.print(F(" uhi=")); Serial.print(RL_UHI);
+  Serial.write(' '); printGains(pidRl); Serial.println();
 }
 
 void printMode() {
@@ -872,6 +879,7 @@ void command(char *line) {
     Serial.println(imuOk ? F("IMU READY") : F("IMU ERROR NOT_READY"));
     printConfig();
     printPid();
+    printRlPol();
     printMode();
   } else if (strcmp(line, "STOP") == 0) {
     bool calWas = cal.active;
@@ -882,6 +890,7 @@ void command(char *line) {
   } else if (strcmp(line, "GET") == 0) {
     printConfig();
     printPid();
+    printRlPol();
     printMode();
   } else if (strncmp(line, "REF ", 4) == 0) {      // REF r_cdeg : 고른 제어기로 기준 유지 시작 / 기준 변경
     if (cal.active) { err(F("BUSY")); return; }
@@ -912,8 +921,8 @@ void command(char *line) {
     else if (k == 3 && v[0] >= 10 && v[0] <= 2000 && v[1] >= 0 && v[1] <= 2000 && v[2] > 0 && v[2] <= 2000) {
       pid.nfc = v[0]; pid.nzz = v[1]; pid.nzp = v[2];
     } else { err(F("BAD_ARGS")); return; }
-    nz1 = nz2 = 0;
-    notchCoeffs();
+    notchCoeffs(pid);
+    if (P == &pid) nz1 = nz2 = 0;
     printPid();
   } else if (strncmp(line, "LIM ", 4) == 0) {      // LIM umax_pwm alim_cdeg
     if (parseInts(line + 4, v, 2) != 2 || v[0] < 0 || v[0] > 255 || v[1] < 500 || v[1] > 18000) { err(F("BAD_ARGS")); return; }
@@ -1023,7 +1032,8 @@ void setup() {
   Serial.begin(BAUD);
   loadConfig();
   ahrs.beta = cfg.betaMilli * 0.001f;
-  notchCoeffs();
+  notchCoeffs(pid);
+  notchCoeffs(pidRl);
   delay(200);
   Serial.print(F("READY ")); Serial.println(F(FW_ID));
   if (!cfgValid) Serial.println(F("NOTE NO_EEPROM_CONFIG (calibrate with lab firmware first)"));

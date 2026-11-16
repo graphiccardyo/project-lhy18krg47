@@ -36,6 +36,22 @@ button.primary { background: var(--s1); border-color: transparent; color: #fff; 
 button.stop { background: var(--crit); border-color: transparent; color: var(--on-crit); font-weight: 700; font-size: 17px; padding: 8px 26px; }
 input[type=number] { font: inherit; width: 84px; padding: 5px 7px; border-radius: 7px; border: 1px solid var(--border); background: var(--surface); color: var(--ink); }
 input[type=range] { width: 100%; accent-color: var(--s1); }
+input[type=text], select { font: inherit; padding: 5px 7px; border-radius: 7px; border: 1px solid var(--border); background: var(--surface); color: var(--ink); }
+input[type=text] { flex: 1; min-width: 0; }
+#presetSel { flex: 1; min-width: 0; max-width: 100%; }
+button.small { padding: 4px 9px; font-size: 13px; }
+.seg-sm { display: inline-grid; }
+.seg-sm button { padding: 6px 12px; font-size: 14px; }
+.bar { height: 7px; border-radius: 4px; background: var(--grid); overflow: hidden; }
+.bar > i { display: block; height: 100%; width: 0; background: var(--s1); }
+.tablewrap { max-height: 260px; overflow: auto; border: 1px solid var(--border); border-radius: 8px; margin-top: 8px; }
+table { border-collapse: collapse; width: 100%; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+th, td { border-bottom: 1px solid var(--border); padding: 3px 6px; text-align: right; white-space: nowrap; }
+th { color: var(--ink-2); font-weight: 600; position: sticky; top: 0; background: var(--surface); }
+td:nth-child(-n+4), th:nth-child(-n+4) { text-align: left; }
+td.ab { color: var(--crit); }
+[hidden] { display: none !important; }
+.presets { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
 main { display: grid; grid-template-columns: 360px minmax(0, 1fr); gap: 14px; padding: 14px 18px; max-width: 1500px; margin: auto; align-items: start; }
 @media (max-width: 900px) { main { grid-template-columns: minmax(0, 1fr); padding: 12px 16px; } }
 section { background: var(--surface); border: 1px solid var(--border); border-radius: 11px; padding: 12px 14px; min-width: 0; }
@@ -53,7 +69,7 @@ section { background: var(--surface); border: 1px solid var(--border); border-ra
 .kv { font: 12.5px/1.5 ui-monospace, Consolas, monospace; background: var(--page); border: 1px solid var(--border); border-radius: 8px; padding: 5px 8px; overflow-x: auto; white-space: nowrap; }
 .state { font-size: 14px; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--page); }
 .state b { font-weight: 650; }
-.readouts { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
+.readouts { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; }
 @media (max-width: 700px) { .readouts { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .stat { border: 1px solid var(--border); border-radius: 8px; padding: 5px 9px; min-width: 0; }
 .stat b { display: block; font-size: 24px; font-weight: 650; line-height: 1.2; font-variant-numeric: tabular-nums; }
@@ -85,7 +101,9 @@ details summary { cursor: pointer; color: var(--ink-2); font-size: 13.5px; }
         <button id="modePid" aria-pressed="true">PID</button>
         <button id="modeRl" aria-pressed="false">강화학습 (RL)</button>
       </div>
-      <p class="note">RL = 11-15 rl8 최종 정책(ep 120)을 보드에 넣은 것. RL을 고르면 PID로 기준까지 간 뒤 |오차| &lt; 2°를 1초 유지하면 넘어갑니다(학습 때와 같은 시작). 학습 범위는 15–30°입니다.</p>
+      <p class="note">RL = <b>잔차 RL</b>: 학습 때의 PI + 노치 출력에 정책이 잔차를 더합니다(노치 앞). RL을 고르면 PID로 기준까지 간 뒤 |오차| &lt; 2°를 1초 유지하면 넘어갑니다(학습 때와 같은 시작). 학습 범위는 15–30°입니다.</p>
+      <div class="kv" id="rlpol" title="보드 RLPOL 줄 (policy.h)">RL 정책: —</div>
+      <p class="note">RL 중에는 위 고정 PID를 쓰므로, 아래 PID 이득은 PID 모드에만 적용됩니다.</p>
     </section>
     <section>
       <h2>기준 각도</h2>
@@ -112,12 +130,22 @@ details summary { cursor: pointer; color: var(--ink-2); font-size: 13.5px; }
         <label for="kd">Kd</label><input id="kd" type="number" step="0.005" min="0" value="0">
         <label for="ff">ff (PWM)</label><input id="ff" type="number" step="1" min="0" max="255" value="150">
         <label for="umin">최소 PWM</label><input id="umin" type="number" step="1" min="0" max="255" value="40">
-        <label class="check" style="grid-column: span 2"><input id="notchOn" type="checkbox" checked>노치 <input id="notchHz" type="number" step="0.01" min="0.1" max="20" value="2.35" style="width:70px"> Hz</label>
       </div>
-      <div class="row" style="margin-top:8px">
-        <button class="pidPreset" data-p="4.30,13.3,0,150,40,2.35">권장 PI + 노치</button>
-        <button class="pidPreset" data-p="0.90,7.0,0.020,140,40,0">손튜닝 PID</button>
-        <button class="pidPreset" data-p="1.59,0,0,150,40,0">P만</button>
+      <div class="row" style="margin-top:6px">
+        <label class="check"><input id="notchOn" type="checkbox" checked>노치</label>
+        <span class="check">f <input id="nf" type="number" step="0.01" min="0.1" max="20" value="2.35" style="width:66px"> Hz</span>
+        <span class="check">ζz <input id="nzz" type="number" step="0.01" min="0" max="2" value="0.15" style="width:58px"></span>
+        <span class="check">ζp <input id="nzp" type="number" step="0.05" min="0.01" max="2" value="0.7" style="width:58px"></span>
+      </div>
+      <div class="presets">
+        <div class="row"><b>저장된 설정</b><select id="presetSel"><option value="">— 없음 —</option></select>
+          <button id="presetLoadBtn" class="small">불러오기</button><button id="presetDelBtn" class="small">삭제</button></div>
+        <div class="row"><input id="presetName" type="text" maxlength="40" placeholder="이름 (예: PI 1차)">
+          <button id="presetSaveBtn" class="small">현재 값 저장</button></div>
+        <div class="row"><button id="presetExportBtn" class="small">파일로 내보내기</button><button id="presetImportBtn" class="small">파일에서 가져오기</button>
+          <input id="presetFile" type="file" accept=".json,application/json" hidden></div>
+        <div class="note">실험 UI(index.html)와 같은 저장소·파일 형식입니다. 실험 UI에서 저장한 설정의 이득·ff·최소 PWM·노치를 그대로 불러오고, 여기서 같은 이름으로 저장하면 그 설정의 다른 시험 값은 두고 이득만 바꿉니다. 불러온 뒤 <b>이득 적용</b>을 눌러야 보드에 들어갑니다.</div>
+        <div class="note" id="presetMsg"></div>
       </div>
       <div class="row" style="margin-top:8px">
         <button id="applyPid" class="primary" disabled>이득 적용</button>
@@ -135,6 +163,7 @@ details summary { cursor: pointer; color: var(--ink-2); font-size: 13.5px; }
         <div class="stat"><span>오차</span><b id="rErr">—</b></div>
         <div class="stat"><span>PWM</span><b id="rPwm">—</b></div>
         <div class="stat"><span>최근 5 s σ(오차)</span><b id="rStd">—</b></div>
+        <div class="stat"><span>RL 잔차 r</span><b id="rRes">—</b></div>
       </div>
     </section>
     <section>
@@ -143,6 +172,45 @@ details summary { cursor: pointer; color: var(--ink-2); font-size: 13.5px; }
         <span class="note" style="margin:0">최근 <select id="win" style="font:inherit"><option value="10">10</option><option value="20" selected>20</option><option value="40">40</option></select> s · 굵은 선 구간 = RL 제어</span>
         <span class="spacer"></span>
         <button id="csvBtn" disabled title="최근 기록을 CSV로 저장">CSV 저장</button>
+      </div>
+    </section>
+    <section>
+      <h2>시험 (기록·결과 저장)</h2>
+      <div class="row">
+        <div class="seg seg-sm" role="group" aria-label="시험 종류">
+          <button id="tHold" aria-pressed="true">일정 시간 유지</button>
+          <button id="tStep" aria-pressed="false">스텝 입력</button>
+        </div>
+        <span class="note" style="margin:0">지금 고른 제어기(<b id="tCtrl">PID</b>)로 합니다</span>
+      </div>
+      <div class="row" id="tHoldArgs" style="margin-top:8px">
+        <label class="check">기준 <input id="hRef" type="number" step="0.5" min="5" max="40" value="20"> °</label>
+        <label class="check">유지 <input id="hDur" type="number" step="1" min="5" max="600" value="30"> s</label>
+      </div>
+      <div class="row" id="tStepArgs" style="margin-top:8px" hidden>
+        <label class="check">r0 <input id="sR0" type="number" step="0.5" min="5" max="40" value="20"> °</label>
+        <label class="check">→ r1 <input id="sR1" type="number" step="0.5" min="5" max="40" value="25"> °</label>
+        <label class="check">앞 <input id="sPre" type="number" step="1" min="1" max="60" value="5"> s</label>
+        <label class="check">스텝 뒤 <input id="sHold" type="number" step="1" min="3" max="120" value="10"> s</label>
+        <label class="check">r0 복귀 <input id="sPost" type="number" step="1" min="0" max="60" value="0"> s</label>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <button id="testBtn" class="primary" disabled>시험 시작</button>
+        <button id="testAbortBtn" disabled>시험 중단</button>
+        <label class="check"><input id="autoCsv" type="checkbox" checked>끝나면 CSV 자동 저장</label>
+        <span class="note" style="margin:0" id="testMsg"></span>
+      </div>
+      <div class="bar" style="margin-top:6px"><i id="testBar"></i></div>
+      <p class="note">시작하면 시작 기준(유지: 기준, 스텝: r0)으로 가서 |오차| &lt; 2°를 1초 유지한 뒤(RL은 RL로 넘어간 뒤) 기록을 시작합니다. 끝나도 마지막 기준을 계속 유지하니 <b>정지</b>로 끄세요. 기록은 보드 D 줄(20 ms)이고, 정지·FALLBACK·연결 끊김이면 중단으로 남깁니다.</p>
+      <div class="tablewrap">
+        <table id="resTable">
+          <thead><tr><th>#</th><th>시각</th><th>시험</th><th>제어기</th><th>기준</th><th>상승</th><th>OS</th><th>정착 5%</th><th>편향</th><th>σ(e)</th><th>RMS</th><th>PWM σ</th><th>상태</th><th></th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div class="row" style="margin-top:6px">
+        <button id="resCsvBtn" class="small" disabled>결과 표 CSV 저장</button>
+        <span class="note" style="margin:0">상승 = 10–90%, OS = 오버슈트, 편향 = 기준 − 평균 θ, σ(e)·PWM σ = 마지막 3 s(유지는 전체). 스텝의 편향은 스텝 구간 마지막 2 s.</span>
       </div>
     </section>
     <section>

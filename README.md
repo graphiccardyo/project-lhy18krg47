@@ -18,7 +18,7 @@
 | 5 | PID 설계·시험 | 🟢 **PI + 2.35 Hz 노치**를 하드웨어에서 확인 (상승 0.57–0.71 s) | UI ⑥, [analysis/pid_design](analysis/pid_design/REPORT.md) |
 | 6 | Z-N 설계·시험 | 🟢 11-15: 릴레이(Ku 4.87, Tu 0.439 s), Z-N PI, **Z-N PID**(발산 없음, 2.34 Hz 리플 지속 → 공진이 Ku·Tu를 정하는 Z-N의 한계), 같은 이득 + 2.35 Hz 노치는 리플 절반·상승 0.60 s. 11-13 모델 Z-N PID는 30°에서 진동 | UI ⑥, [data/20261115_run1](data/20261115_run1/analysis/REPORT.md), [data/20261115_run3](data/20261115_run3/analysis/REPORT.md) |
 | 7 | 강화학습 제어기 | ✅ 실기 SAC(rl8): 평가 RMS 1.9° (PID 2.4°), 정상상태 편향·리플은 PID가 나음. 감쇠 보상(rl9)은 효과 없음 | `rl/`, [진행 기록](docs/RL_HISTORY.md), [firmware/aeropendulum_rl](firmware/aeropendulum_rl/aeropendulum_rl.ino), [data/20261115_rl8](data/20261115_rl8/) |
-| 시연 | PID ↔ RL 시연 | 🔧 rl8 정책을 보드에 넣은 시연용 펌웨어 + UI (벤치 검증, 실기 시연 전) | [docs/DEMO.md](docs/DEMO.md), [firmware/aeropendulum_demo](firmware/aeropendulum_demo/aeropendulum_demo.ino), `lab/demo.html` |
+| 시연 | PID ↔ RL 시연 | 🔧 잔차 RL 정책(새 모터, rl5)을 보드에 넣은 시연용 펌웨어 2.0 + UI(시험·결과 저장). 보드 벤치 시험 통과, 실기 시연 전 | [docs/DEMO.md](docs/DEMO.md), [firmware/aeropendulum_demo](firmware/aeropendulum_demo/aeropendulum_demo.ino), `lab/demo.html` |
 
 결과 요약과 근거는 [docs/RESULTS.md](docs/RESULTS.md), 지난 시험(11-06 기구 수정 전, 11-13 기구 수정 직후)은 그 문서의 [이전 기록](docs/RESULTS.md#4-이전-기록)에 있습니다.
 
@@ -50,7 +50,7 @@ G(s) = Δθ/ΔPWM = [ K/(0.324 s + 1) · 14.8²/(s² + 2.48 s + 14.8²) + 0.12/(
 ```
 firmware/aeropendulum_lab/   우노 펌웨어 (센서·Madgwick·보정·가진 신호·PID·안전장치) — 단일 .ino
 firmware/aeropendulum_rl/    강화학습용 펌웨어 (PC 가 보낸 PWM 증분 적용 + 안전장치·PID 복귀)
-firmware/aeropendulum_demo/  시연용 펌웨어 (보드 위 고정 RL 정책 + 조정 가능한 PID) — UI 는 lab/demo.html
+firmware/aeropendulum_demo/  시연용 펌웨어 (보드 위 고정 잔차 RL 정책 + 조정 가능한 PID) — UI 는 lab/demo.html
 rl/                          Python SAC 실기 학습기, 가짜 보드, 정책 시험·분기·IMU 점검, 웹 대시보드
 lab/                         실험 UI (index.html + app.js, 시뮬레이터 sim.js, 식별 계산 sysid.js, 차트 chart.js)
 Start-Lab.cmd                Edge 로 lab/index.html 열기
