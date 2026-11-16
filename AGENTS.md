@@ -11,6 +11,7 @@
 | 1. 정적 특성 시험 · 2. 스텝·스윕 시험 · 3. 전달함수 식별·검증 | 완료. **2026-11-15 재식별 모델이 기준**(아래 "기준 모델") |
 | 4. 폐루프 스텝 응답 · 5. PID 설계·시험 · 6. Z-N 설계·시험 | 구현 완료(펌웨어 2.1), 하드웨어 폐루프 시험 대부분 완료(PI + 노치, PID + 노치, Z-N PI·PID·PID + 노치). P 등 남음 |
 | 7. 강화학습 제어기 | 실기 SAC 실험 마침(RL 펌웨어 + PC 학습기). 최종 `data/20261115_rl8` best, 감쇠 보상 `rl9`은 효과 없음 |
+| 시연 | 시연용 펌웨어 `AEROPEND_DEMO 1.0`(rl8 best 정책을 정수 양자화해 보드에 넣음 + 조정 가능한 PID) + `lab/demo.html`. 벤치 검증 완료, **모터 돌린 실기 시연은 아직** ([docs/DEMO.md](docs/DEMO.md)) |
 
 ## 저장소 지도
 
@@ -18,12 +19,13 @@
 |---|---|
 | `firmware/aeropendulum_lab/aeropendulum_lab.ino` | Uno 펌웨어 (단일 파일, 외부 라이브러리 없음) |
 | `firmware/aeropendulum_rl/aeropendulum_rl.ino` | 강화학습용 펌웨어 `AEROPEND_RL 1.0` (실험용에서 갈라짐: 개루프 프로파일·RELAY 삭제, `RL`/`SAFE`/`RUN RL`/`A` 추가, EEPROM 형식 공유). 프로토콜은 `docs/RL_PROTOCOL.md` |
+| `firmware/aeropendulum_demo/` | 시연용 펌웨어 `AEROPEND_DEMO 1.0` (RL 펌웨어에서 갈라짐: 보드 위 고정 RL 정책 + PID, `MODE`/`OUT`/`NN` 추가, 가진·CLSTEP·RL 스트리밍 삭제, EEPROM 형식 공유) + 자동 생성 `policy.h`. 설명·프로토콜은 `docs/DEMO.md` |
 | `rl/` | Python SAC 실기 학습기 (`python -m rl.train`), 가짜 보드, 벤치 시험 `rl.bench_test`(83항목), 자체 시험 `rl.selftest`, 웹 대시보드. `.venv`의 Python을 씁니다(PyTorch). 설명은 `rl/README.md` |
-| `lab/` | Web Serial 실험 UI (`index.html`, `app.js`), 시뮬레이터 `sim.js`, 계산 `sysid.js`, 차트 `chart.js` |
+| `lab/` | Web Serial 실험 UI (`index.html`, `app.js`), 시뮬레이터 `sim.js`, 계산 `sysid.js`, 차트 `chart.js`. 시연 UI `demo.html`·`demo.js` + 시뮬레이터 `demo_sim.js`·`demo_policy.js`(자동 생성) |
 | `analysis/` | Python 분석·설계 (`aero_analyze.py`, `aero_freqresp.py`, `aero_model_fit.py`, `aero_closedloop.py`(폐루프 기록 재현), `pid_design.py`) |
 | `matlab/` | MATLAB 분석 (`aero_load`, `aero_iddata`, `aero_sysid(_all)`, `aero_static_map`, `aero_pid_design`) |
 | `data/<날짜>_runN/` | 원본 CSV(수정 금지) + `analysis/REPORT.md` |
-| `scripts/` | `Build-Lab.ps1`(컴파일·업로드), `Test-LabFirmware.ps1`(보드 시험 67항목), `test_sysid.js` |
+| `scripts/` | `Build-Lab.ps1`(컴파일·업로드), `Build-Rl.ps1`, `Build-Demo.ps1`(`-NnTest`), `Test-LabFirmware.ps1`(보드 시험 67항목), `test_sysid.js` |
 | `docs/` | `EXPERIMENT_GUIDE`, `PROTOCOL`, `HARDWARE`, `RESULTS`, `DEVELOPMENT`, `RL_PROTOCOL`, `RL_HISTORY`(강화학습 실행별 결정·근거 기록 — RL 설정을 바꾸면 여기에 한 항목 추가) |
 
 ## 반드시 지킬 것
@@ -44,6 +46,7 @@
 | 펌웨어 | `arduino-cli compile -b arduino:avr:uno --output-dir build/aeropendulum_lab firmware/aeropendulum_lab` (경고 0, 플래시 확인) → 보드가 있으면 업로드 후 `scripts/Test-LabFirmware.ps1 -Port COM4` |
 | RL 펌웨어 | `scripts/Build-Rl.ps1` (경고 0, 현재 29942 B = 92%) → 업로드 후 `.venv\Scripts\python.exe -m rl.bench_test --port COM4` (벤치 모드에서만 돌고 `CFG BACKUP`/`RESTORE`) |
 | `rl/` | `python -m rl.selftest --quick`, `python -m rl.bench_test --fake --fast`. RL 프로토콜을 바꾸면 펌웨어, `rl/fake_board.py`, `rl/bench_test.py`, `docs/RL_PROTOCOL.md`를 함께 고칩니다 |
+| 시연 펌웨어 | `scripts/Build-Demo.ps1` (경고 0, 현재 31742 B = **98%**, `-NnTest` 빌드 32150 B) → 업로드 후 `.venv\Scripts\python.exe -m rl.demo_test --port COM4` (벤치 모드만, EEPROM 안 바꿈; `-NnTest` 빌드면 `--nn 300`). 핵심 지표: 시연 설정에서 `miss 0`, 추론 벽시계 < 20 ms(현재 14.3 ms). 정책·양자화를 바꾸면 `python -m rl.demo_policy`(policy.h + lab/demo_policy.js). 프로토콜을 바꾸면 펌웨어, `lab/demo_sim.js`, `lab/demo.js`, `rl/demo_test.py`, `docs/DEMO.md`를 함께 고칩니다 |
 | `sysid.js` | `node scripts/test_sysid.js` |
 | UI / 시뮬레이터 | `python -m http.server 8765 --directory lab` 로 띄워 브라우저에서 **시뮬레이터** 버튼으로 해당 탭 동작 확인 |
 | 분석 스크립트 | `python analysis/aero_analyze.py data/20261113_run1`, `python analysis/aero_closedloop.py data/20261113_run3` 등 기존 run에서 숫자가 REPORT.md와 같은지 |
@@ -61,6 +64,7 @@
 - PC ↔ 보드 왕복 지연은 약 7–9 ms입니다(2026-11-14 측정). RL의 적용 지연 `lag`는 2샘플(20 ms)로 쓰세요. 1샘플은 누락이 납니다.
 - Windows에서 pyserial의 `read`/`write`를 여러 스레드로 쓰면 GIL 경합 때 "WriteFile failed"가 잘못 납니다. `rl/link.py`의 `_WinPortIO`가 이를 우회하니 되돌리지 마세요.
 - Arduino AVR 코어에서 `min`/`max`는 매크로라 `min<T>()` 템플릿 문법이 안 됩니다.
+- 시연 펌웨어의 RL 추론(약 5 ms)은 틱 사이 빈 시간(약 8 ms / 20 ms)에 돕니다. 틱·직렬 출력에 일을 더하면 추론이 20 ms를 넘어 `miss`가 생깁니다(D 줄 10 ms = `OUT 1`에서 이미 1 s에 한 번쯤). 고친 뒤에는 `rl.demo_test`의 시연 설정 `miss 0`을 확인하세요. 추론 중에 `Serial`로 길게 보내지 마세요(전송 버퍼가 차면 막힘).
 
 ## 기준 모델 (2026-11-15 재식별)
 

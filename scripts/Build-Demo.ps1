@@ -1,0 +1,41 @@
+﻿param(
+    [string]$Port = 'COM4',
+    # 지정하면 컴파일 후 우노에 업로드합니다. 업로드 전 모터 12V 전원을 끄세요.
+    [switch]$Upload,
+    # 정책 계산 시험 명령 NN 을 넣어 빌드 (플래시 98%, rl/demo_test.py --nn 용). 시연에는 기본 빌드를 쓰세요.
+    [switch]$NnTest,
+    # arduino-cli.exe 경로 (PATH에 없을 때)
+    [string]$Cli = ''
+)
+# Aeropendulum 시연용 펌웨어(firmware/aeropendulum_demo, AEROPEND_DEMO 1.0: 고정 RL 정책 + PID) 컴파일/업로드
+# 외부 라이브러리 불필요 (Arduino AVR 코어의 Wire, EEPROM만 사용)
+# EEPROM 형식이 실험용 펌웨어와 같아서 번갈아 올려도 보정·영점이 유지됩니다.
+$ErrorActionPreference = 'Stop'
+$root = Split-Path -Parent $PSScriptRoot
+if (-not $Cli) {
+    $cmd = Get-Command arduino-cli -ErrorAction SilentlyContinue
+    if ($cmd) { $Cli = $cmd.Source }
+    elseif (Test-Path "${root}\.tools\arduino-cli.exe") { $Cli = "${root}\.tools\arduino-cli.exe" }
+    else {
+        # Arduino IDE 2 에 들어 있는 arduino-cli (사용자 설치 / 전체 설치)
+        $bundled = @("${env:LOCALAPPDATA}\Programs\Arduino IDE\resources\app\lib\backend\resources\arduino-cli.exe",
+                     "${env:ProgramFiles}\Arduino IDE\resources\app\lib\backend\resources\arduino-cli.exe") |
+                   Where-Object { Test-Path $_ } | Select-Object -First 1
+        if ($bundled) { $Cli = $bundled }
+    }
+    if (-not $Cli) { throw 'arduino-cli를 찾을 수 없습니다. -Cli 로 경로를 주거나 Arduino IDE에서 firmware/aeropendulum_demo/aeropendulum_demo.ino 를 여세요.' }
+    Write-Host "arduino-cli: ${Cli}"
+}
+$sketch = Join-Path $root 'firmware\aeropendulum_demo'
+$out = Join-Path $root 'build\aeropendulum_demo'
+& $Cli core install arduino:avr | Out-Host
+$extra = @()
+if ($NnTest) { $extra = @('--build-property', 'compiler.cpp.extra_flags=-DNN_TEST=1') }
+& $Cli compile -b arduino:avr:uno --warnings all --output-dir $out @extra $sketch
+if ($LASTEXITCODE -ne 0) { throw '컴파일 실패' }
+if ($Upload) {
+    Write-Host "업로드: ${Port} (시리얼 모니터/실험실 페이지가 포트를 쓰고 있으면 닫으세요)"
+    & $Cli upload -b arduino:avr:uno -p $Port --input-dir $out $sketch
+    if ($LASTEXITCODE -ne 0) { throw '업로드 실패' }
+    Write-Host '완료. HELLO 응답이 READY AEROPEND_DEMO 1.0 인지 확인하세요.'
+}

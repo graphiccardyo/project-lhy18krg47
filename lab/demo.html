@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>에어로펜듈럼 시연</title>
+<style>
+:root {
+  color-scheme: light;
+  --page: #f9f9f7; --surface: #fcfcfb; --ink: #0b0b0b; --ink-2: #52514e; --muted: #6f6d68;
+  --grid: #e1e0d9; --axis: #c3c2b7; --border: rgba(11,11,11,.12);
+  --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #8a5cd1; --s5: #9b9a93;
+  --good: #0ca30c; --warn: #d99a06; --crit: #d03b3b; --on-crit: #fff;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --page: #0d0d0d; --surface: #1a1a19; --ink: #f0efec; --ink-2: #c3c2b7; --muted: #a3a29a;
+    --grid: #2c2c2a; --axis: #383835; --border: rgba(255,255,255,.12);
+    --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #9d74e0; --s5: #6f6d68;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--page); color: var(--ink); font: 15px/1.45 system-ui, -apple-system, "Segoe UI", "Malgun Gothic", sans-serif; }
+header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; padding: 12px 18px; border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--page); z-index: 5; }
+h1 { font-size: 19px; margin: 0; font-weight: 650; }
+h2 { font-size: 15px; margin: 0 0 8px; font-weight: 650; }
+.spacer { flex: 1; }
+.pill { display: inline-flex; align-items: center; gap: 6px; font-size: 13.5px; color: var(--ink-2); white-space: nowrap; }
+.dot { width: 9px; height: 9px; border-radius: 50%; background: var(--axis); flex: none; }
+.dot.good { background: var(--good); } .dot.warn { background: var(--warn); } .dot.crit { background: var(--crit); }
+button { font: inherit; padding: 7px 13px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--ink); cursor: pointer; }
+button:hover:not(:disabled) { border-color: var(--ink-2); }
+button:disabled { opacity: .45; cursor: not-allowed; }
+button.primary { background: var(--s1); border-color: transparent; color: #fff; font-weight: 600; }
+button.stop { background: var(--crit); border-color: transparent; color: var(--on-crit); font-weight: 700; font-size: 17px; padding: 8px 26px; }
+input[type=number] { font: inherit; width: 84px; padding: 5px 7px; border-radius: 7px; border: 1px solid var(--border); background: var(--surface); color: var(--ink); }
+input[type=range] { width: 100%; accent-color: var(--s1); }
+main { display: grid; grid-template-columns: 360px minmax(0, 1fr); gap: 14px; padding: 14px 18px; max-width: 1500px; margin: auto; align-items: start; }
+@media (max-width: 900px) { main { grid-template-columns: minmax(0, 1fr); padding: 12px 16px; } }
+section { background: var(--surface); border: 1px solid var(--border); border-radius: 11px; padding: 12px 14px; min-width: 0; }
+.col { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.note { color: var(--muted); font-size: 12.5px; margin: 6px 0 0; }
+.seg { display: grid; grid-template-columns: 1fr 1fr; border: 1px solid var(--border); border-radius: 9px; overflow: hidden; }
+.seg button { border: 0; border-radius: 0; padding: 12px 6px; font-size: 16px; font-weight: 600; }
+.seg button + button { border-left: 1px solid var(--border); }
+.seg button[aria-pressed=true] { background: var(--ink); color: var(--surface); }
+.refval { font-size: 30px; font-weight: 650; font-variant-numeric: tabular-nums; min-width: 4.2ch; text-align: right; }
+.grid2 { display: grid; grid-template-columns: auto 1fr auto 1fr; gap: 6px 10px; align-items: center; }
+.grid2 label { color: var(--ink-2); font-size: 13.5px; }
+.check { display: inline-flex; align-items: center; gap: 6px; font-size: 13.5px; color: var(--ink-2); }
+.kv { font: 12.5px/1.5 ui-monospace, Consolas, monospace; background: var(--page); border: 1px solid var(--border); border-radius: 8px; padding: 5px 8px; overflow-x: auto; white-space: nowrap; }
+.state { font-size: 14px; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--page); }
+.state b { font-weight: 650; }
+.readouts { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
+@media (max-width: 700px) { .readouts { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.stat { border: 1px solid var(--border); border-radius: 8px; padding: 5px 9px; min-width: 0; }
+.stat b { display: block; font-size: 24px; font-weight: 650; line-height: 1.2; font-variant-numeric: tabular-nums; }
+.stat span { font-size: 12px; color: var(--ink-2); }
+canvas { display: block; width: 100%; height: 340px; }
+#banner { display: none; margin: 10px 18px 0; padding: 8px 12px; border-radius: 8px; border: 1px solid var(--crit); }
+#banner.show { display: block; }
+#log { height: 130px; overflow: auto; font: 12px/1.4 ui-monospace, Consolas, monospace; white-space: pre-wrap; color: var(--ink-2); background: var(--page); border: 1px solid var(--border); border-radius: 8px; padding: 6px 8px; margin-top: 6px; }
+#log .e { color: var(--crit); } #log .ok { color: var(--good); } #log .tx { color: var(--s1); }
+details summary { cursor: pointer; color: var(--ink-2); font-size: 13.5px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>에어로펜듈럼 시연 — PID vs 강화학습</h1>
+  <button id="connectBtn" class="primary">보드 연결</button>
+  <button id="simBtn" title="하드웨어 없이 가상 진자로 연습합니다">시뮬레이터</button>
+  <span class="pill"><span id="dotLink" class="dot"></span><span id="txtLink">연결 안 됨</span></span>
+  <span class="pill"><span id="dotImu" class="dot"></span><span id="txtImu">IMU</span></span>
+  <span class="spacer"></span>
+  <button id="stopBtn" class="stop" title="Esc / Space">정지</button>
+</header>
+<div id="banner"></div>
+<main>
+  <div class="col">
+    <section>
+      <h2>제어기</h2>
+      <div class="seg" role="group" aria-label="제어기">
+        <button id="modePid" aria-pressed="true">PID</button>
+        <button id="modeRl" aria-pressed="false">강화학습 (RL)</button>
+      </div>
+      <p class="note">RL = 11-15 rl8 최종 정책(ep 120)을 보드에 넣은 것. RL을 고르면 PID로 기준까지 간 뒤 |오차| &lt; 2°를 1초 유지하면 넘어갑니다(학습 때와 같은 시작). 학습 범위는 15–30°입니다.</p>
+    </section>
+    <section>
+      <h2>기준 각도</h2>
+      <div class="row">
+        <input id="refRange" type="range" min="10" max="35" step="0.5" value="20" aria-label="기준 각도">
+        <span class="refval"><span id="refTxt">20.0</span>°</span>
+      </div>
+      <div class="row" style="margin-top:6px">
+        <button class="refPreset" data-v="15">15°</button>
+        <button class="refPreset" data-v="20">20°</button>
+        <button class="refPreset" data-v="25">25°</button>
+        <button class="refPreset" data-v="30">30°</button>
+        <span class="spacer"></span>
+        <button id="startBtn" class="primary" disabled>시작</button>
+      </div>
+      <p class="note">돌고 있을 때 기준을 바꾸면 바로 적용됩니다. 30°를 넘으면 PWM이 포화에 가까워 여유가 없습니다.</p>
+      <div id="state" class="state" style="margin-top:8px">대기</div>
+    </section>
+    <section>
+      <h2>PID 이득</h2>
+      <div class="grid2">
+        <label for="kp">Kp</label><input id="kp" type="number" step="0.01" min="0" value="4.30">
+        <label for="ki">Ki</label><input id="ki" type="number" step="0.1" min="0" value="13.3">
+        <label for="kd">Kd</label><input id="kd" type="number" step="0.005" min="0" value="0">
+        <label for="ff">ff (PWM)</label><input id="ff" type="number" step="1" min="0" max="255" value="150">
+        <label for="umin">최소 PWM</label><input id="umin" type="number" step="1" min="0" max="255" value="40">
+        <label class="check" style="grid-column: span 2"><input id="notchOn" type="checkbox" checked>노치 <input id="notchHz" type="number" step="0.01" min="0.1" max="20" value="2.35" style="width:70px"> Hz</label>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <button class="pidPreset" data-p="4.30,13.3,0,150,40,2.35">권장 PI + 노치</button>
+        <button class="pidPreset" data-p="0.90,7.0,0.020,140,40,0">손튜닝 PID</button>
+        <button class="pidPreset" data-p="1.59,0,0,150,40,0">P만</button>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <button id="applyPid" class="primary" disabled>이득 적용</button>
+        <span class="note" style="margin:0">돌고 있을 때도 바로 바뀝니다.</span>
+      </div>
+      <div class="note">보드에 적용된 값:</div>
+      <div id="pidcfg" class="kv">—</div>
+    </section>
+  </div>
+  <div class="col">
+    <section>
+      <div class="readouts">
+        <div class="stat"><span>각도 θ</span><b id="rTheta">—</b></div>
+        <div class="stat"><span>기준</span><b id="rRef">—</b></div>
+        <div class="stat"><span>오차</span><b id="rErr">—</b></div>
+        <div class="stat"><span>PWM</span><b id="rPwm">—</b></div>
+        <div class="stat"><span>최근 5 s σ(오차)</span><b id="rStd">—</b></div>
+      </div>
+    </section>
+    <section>
+      <canvas id="chart" aria-label="각도·기준·PWM 그래프"></canvas>
+      <div class="row" style="margin-top:6px">
+        <span class="note" style="margin:0">최근 <select id="win" style="font:inherit"><option value="10">10</option><option value="20" selected>20</option><option value="40">40</option></select> s · 굵은 선 구간 = RL 제어</span>
+        <span class="spacer"></span>
+        <button id="csvBtn" disabled title="최근 기록을 CSV로 저장">CSV 저장</button>
+      </div>
+    </section>
+    <section>
+      <div class="row"><span class="note" style="margin:0" id="status">상태 줄 대기</span></div>
+      <details>
+        <summary>통신 기록</summary>
+        <div id="log"></div>
+      </details>
+    </section>
+  </div>
+</main>
+<script src="chart.js"></script>
+<script src="demo_policy.js"></script>
+<script src="demo_sim.js"></script>
+<script src="demo.js"></script>
+</body>
+</html>
